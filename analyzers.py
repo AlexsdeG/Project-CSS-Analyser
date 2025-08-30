@@ -27,15 +27,38 @@ class BaseAnalyzer:
         # Suppress cssutils warnings
         cssutils.log.setLevel(logging.CRITICAL)
     
-    def _parse_css_file(self, file_path: Path) -> cssutils.css.CSSStyleSheet:
-        """Parse a CSS file and return the stylesheet object."""
+    
+    def _parse_css_file(self, file_path: Path) -> Tuple[cssutils.css.CSSStyleSheet, str]:
+        """Parse a CSS file and return the stylesheet object and content."""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 css_content = f.read()
-            return self.css_parser.parseString(css_content)
+            stylesheet = self.css_parser.parseString(css_content)
+            return stylesheet, css_content
         except Exception as e:
             self.errors.append(f"Error parsing {file_path}: {str(e)}")
-            return None
+            return None, ""
+    
+    def _get_line_number(self, css_content: str, rule_text: str) -> int:
+        """Calculate the line number of a rule in the CSS content."""
+        # Determine the pattern based on the type of rule_text
+        if rule_text.startswith('/*') and rule_text.endswith('*/'):
+            # Comment
+            pattern = re.escape(rule_text)
+        elif rule_text.startswith('@media'):
+            # Media query
+            pattern = re.escape(rule_text)
+        else:
+            # Selector
+            pattern = re.escape(rule_text) + r'\s*\{'
+        
+        match = re.search(pattern, css_content)
+        if match:
+            pos = match.start()
+            return css_content[:pos].count('\n') + 1
+        else:
+            return 0
+    
 
 class DuplicateAnalyzer(BaseAnalyzer):
     """Analyzer for finding duplicate CSS selectors, media queries, and comments."""
@@ -50,7 +73,7 @@ class DuplicateAnalyzer(BaseAnalyzer):
         }
         
         for css_file in css_files:
-            stylesheet = self._parse_css_file(css_file)
+            stylesheet, css_content = self._parse_css_file(css_file)
             if not stylesheet:
                 continue
             
@@ -59,18 +82,20 @@ class DuplicateAnalyzer(BaseAnalyzer):
                     # Handle CSS selectors
                     selector = rule.selectorText
                     if selector:
+                        line = self._get_line_number(css_content, rule.selectorText)
                         results['selectors'][selector].append({
                             'file': str(css_file),
-                            'line': rule.line if hasattr(rule, 'line') else 0
+                            'line': line
                         })
                 
                 elif isinstance(rule, cssutils.css.CSSMediaRule):
                     # Handle media queries
                     media_query = rule.media.mediaText
                     if media_query:
+                        line = self._get_line_number(css_content, "@media " + rule.media.mediaText)
                         results['media_queries'][media_query].append({
                             'file': str(css_file),
-                            'line': rule.line if hasattr(rule, 'line') else 0
+                            'line': line
                         })
                     
                     # Also check rules within media queries
@@ -78,18 +103,20 @@ class DuplicateAnalyzer(BaseAnalyzer):
                         if isinstance(inner_rule, cssutils.css.CSSStyleRule):
                             selector = inner_rule.selectorText
                             if selector:
+                                line = self._get_line_number(css_content, inner_rule.selectorText)
                                 results['selectors'][selector].append({
                                     'file': str(css_file),
-                                    'line': inner_rule.line if hasattr(inner_rule, 'line') else 0
+                                    'line': line
                                 })
                 
                 elif isinstance(rule, cssutils.css.CSSComment):
                     # Handle comments
                     comment = rule.cssText
                     if comment and comment.strip():
+                        line = self._get_line_number(css_content, rule.cssText)
                         results['comments'][comment].append({
                             'file': str(css_file),
-                            'line': rule.line if hasattr(rule, 'line') else 0
+                            'line': line
                         })
         
         # Filter to keep only duplicates
@@ -122,7 +149,7 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
         selectors = set()
         
         for css_file in css_files:
-            stylesheet = self._parse_css_file(css_file)
+            stylesheet, css_content = self._parse_css_file(css_file)
             if not stylesheet:
                 continue
             
@@ -241,34 +268,6 @@ class StructureAnalyzer(BaseAnalyzer):
     def __init__(self):
         super().__init__()
         self.prefix_pattern = re.compile(r'\.([a-zA-Z0-9_-]+)-')
-    
-    def _parse_css_file(self, file_path: Path) -> Tuple[cssutils.css.CSSStyleSheet, str]:
-        """Parse a CSS file and return the stylesheet object and content."""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                css_content = f.read()
-            stylesheet = self.css_parser.parseString(css_content)
-            return stylesheet, css_content
-        except Exception as e:
-            self.errors.append(f"Error parsing {file_path}: {str(e)}")
-            return None, ""
-    
-    def _get_line_number(self, css_content: str, rule_text: str) -> int:
-        """Calculate the line number of a rule in the CSS content."""
-        # Clean the rule text for matching
-        cleaned_rule_text = rule_text.strip()
-        # Find the position of the rule text in the content
-        pos = css_content.find(cleaned_rule_text)
-        if pos == -1:
-            # If exact match not found, try a more flexible search
-            # Remove extra whitespace and compare
-            cleaned_content = ' '.join(css_content.split())
-            cleaned_rule = ' '.join(cleaned_rule_text.split())
-            pos = cleaned_content.find(cleaned_rule)
-            if pos == -1:
-                return 0
-        # Count newlines up to that position
-        return css_content[:pos].count('\n') + 1
     
     def analyze(self, css_files: List[Path]) -> Dict[str, Any]:
         """Analyze CSS structure for prefixes, comments, and patterns."""
