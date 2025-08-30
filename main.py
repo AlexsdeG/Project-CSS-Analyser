@@ -26,7 +26,10 @@ def cli():
     Analyzes CSS files for duplicates, unused selectors, and structural patterns.
     Supports HTML, PHP, and JS file scanning for unused selector detection.
     """
-    pass
+    # Create reports folder if it doesn't exist
+    reports_dir = Path("reports")
+    reports_dir.mkdir(exist_ok=True)
+    
 
 @cli.command()
 @click.argument('path', type=click.Path(exists=True, path_type=Path))

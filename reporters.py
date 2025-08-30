@@ -236,6 +236,11 @@ class HTMLReporter:
     def __init__(self):
         self.template = self._load_template()
     
+    def _ensure_reports_folder(self):
+        """Ensure the reports folder exists."""
+        reports_dir = Path("reports")
+        reports_dir.mkdir(exist_ok=True)
+    
     def _load_template(self) -> Template:
         """Load the HTML template."""
         template_path = Path(__file__).parent / "templates" / "report_template.html"
@@ -293,6 +298,12 @@ class HTMLReporter:
     
     def generate_report(self, results: Dict[str, Any], output_path: Path, analysis_type: str):
         """Generate HTML report for a specific analysis type."""
+        self._ensure_reports_folder()
+        
+        # Prefix output_path with reports/ if it's relative
+        if not output_path.is_absolute():
+            output_path = Path("reports") / output_path
+            
         html_content = self.template.render(
             results=results,
             analysis_type=analysis_type,
@@ -306,6 +317,12 @@ class HTMLReporter:
     
     def generate_comprehensive_report(self, all_results: Dict[str, Any], output_path: Path):
         """Generate comprehensive HTML report."""
+        self._ensure_reports_folder()
+        
+        # Prefix output_path with reports/ if it's relative
+        if not output_path.is_absolute():
+            output_path = Path("reports") / output_path
+            
         html_content = self._get_comprehensive_template().render(
             all_results=all_results,
             duplicates_section=self._duplicates_section,
