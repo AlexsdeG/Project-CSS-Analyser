@@ -1,0 +1,104 @@
+/* Note-taking app styles */
+
+/* Duplicate: .note defined twice */
+.note {
+    background-color: #f9f9fa;
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin: 5px 0;
+    border-radius: 5px;
+}
+
+.note {
+    font-size: 14px;
+    color: #333;
+}
+
+/* Unused: .unused-class not used anywhere */
+.unused-class {
+    color: red;
+    font-weight: bold;
+}
+
+/* Note header */
+.nt-header {
+    background-color: #007bff;
+    color: white;
+    padding: 15px;
+    text-align: center;
+    font-size: 20px;
+}
+
+/* Note list */
+.nt-note-list {
+    list-style-type: none;
+    padding: 0;
+}
+
+/* Note item */
+.nt-note-item {
+    background-color: #e9ecef;
+    padding: 10px;
+    margin: 5px 0;
+    border-radius: 5px;
+}
+
+/* Button styles */
+.nt-btn {
+    background-color: #28a745;
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    cursor: pointer;
+    border-radius: 3px;
+}
+
+.nt-btn:hover {
+    background-color: #218838;
+}
+
+/* Form styles */
+.nt-form {
+    margin: 20px 0;
+}
+
+.nt-input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+}
+
+/* Duplicate: #main-container defined twice */
+#main-container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+#main-container {
+    font-family: Arial, sans-serif;
+}
+
+/* Unused: #unused-id not used */
+#unused-id {
+    display: none;
+}
+
+/* Media query */
+@media (max-width: 600px) {
+    .nt-header {
+        font-size: 16px;
+    }
+    
+    .nt-note-item {
+        padding: 5px;
+    }
+}
+
+/* Another media query duplicate */
+@media (max-width: 600px) {
+    .nt-btn {
+        padding: 6px 10px;
+    }
+}
