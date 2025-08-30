@@ -242,6 +242,34 @@ class StructureAnalyzer(BaseAnalyzer):
         super().__init__()
         self.prefix_pattern = re.compile(r'\.([a-zA-Z0-9_-]+)-')
     
+    def _parse_css_file(self, file_path: Path) -> Tuple[cssutils.css.CSSStyleSheet, str]:
+        """Parse a CSS file and return the stylesheet object and content."""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                css_content = f.read()
+            stylesheet = self.css_parser.parseString(css_content)
+            return stylesheet, css_content
+        except Exception as e:
+            self.errors.append(f"Error parsing {file_path}: {str(e)}")
+            return None, ""
+    
+    def _get_line_number(self, css_content: str, rule_text: str) -> int:
+        """Calculate the line number of a rule in the CSS content."""
+        # Clean the rule text for matching
+        cleaned_rule_text = rule_text.strip()
+        # Find the position of the rule text in the content
+        pos = css_content.find(cleaned_rule_text)
+        if pos == -1:
+            # If exact match not found, try a more flexible search
+            # Remove extra whitespace and compare
+            cleaned_content = ' '.join(css_content.split())
+            cleaned_rule = ' '.join(cleaned_rule_text.split())
+            pos = cleaned_content.find(cleaned_rule)
+            if pos == -1:
+                return 0
+        # Count newlines up to that position
+        return css_content[:pos].count('\n') + 1
+    
     def analyze(self, css_files: List[Path]) -> Dict[str, Any]:
         """Analyze CSS structure for prefixes, comments, and patterns."""
         results = {
@@ -255,7 +283,7 @@ class StructureAnalyzer(BaseAnalyzer):
         }
         
         for css_file in css_files:
-            stylesheet = self._parse_css_file(css_file)
+            stylesheet, css_content = self._parse_css_file(css_file)
             if not stylesheet:
                 continue
             
@@ -281,11 +309,12 @@ class StructureAnalyzer(BaseAnalyzer):
                             self._analyze_prefixes(selector_text, results)
                 
                 elif isinstance(rule, cssutils.css.CSSComment):
-                    # Collect comments
+                    # Collect comments with correct line number
+                    line = self._get_line_number(css_content, rule.cssText)
                     comment_info = {
                         'text': rule.cssText,
                         'file': str(css_file),
-                        'line': rule.line if hasattr(rule, 'line') else 0
+                        'line': line
                     }
                     results['comments'].append(comment_info)
                     results['total_comments'] += 1
