@@ -14,6 +14,12 @@
     color: #333;
 }
 
+.note {
+    font-size: 14px;
+    color: #333;
+    line-height: 1.5;
+}
+
 /* Unused: .unused-class not used anywhere */
 .unused-class {
     color: red;

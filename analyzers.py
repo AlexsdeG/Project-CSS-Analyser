@@ -23,6 +23,7 @@ class BaseAnalyzer:
     def __init__(self):
         self.css_parser = cssutils.CSSParser()
         self.errors = []
+        self.last_positions = defaultdict(lambda: defaultdict(int))  # file -> rule_text -> last_pos
         
         # Suppress cssutils warnings
         cssutils.log.setLevel(logging.CRITICAL)
@@ -39,7 +40,7 @@ class BaseAnalyzer:
             self.errors.append(f"Error parsing {file_path}: {str(e)}")
             return None, ""
     
-    def _get_line_number(self, css_content: str, rule_text: str) -> int:
+    def _get_line_number(self, css_content: str, rule_text: str, file_path: str = None) -> int:
         """Calculate the line number of a rule in the CSS content."""
         # Determine the pattern based on the type of rule_text
         if rule_text.startswith('/*') and rule_text.endswith('*/'):
@@ -52,12 +53,20 @@ class BaseAnalyzer:
             # Selector
             pattern = re.escape(rule_text) + r'\s*\{'
         
-        match = re.search(pattern, css_content)
-        if match:
-            pos = match.start()
-            return css_content[:pos].count('\n') + 1
-        else:
+        # Find all matches
+        matches = list(re.finditer(pattern, css_content))
+        if not matches:
             return 0
+        
+        # Find the next match after last_pos
+        last_pos = self.last_positions[file_path][rule_text] if file_path else 0
+        for match in matches:
+            if match.start() > last_pos:
+                self.last_positions[file_path][rule_text] = match.end()
+                return css_content[:match.start()].count('\n') + 1
+        
+        # If no more matches after last_pos, return 0 or the last match's line
+        return 0
     
 
 class DuplicateAnalyzer(BaseAnalyzer):
@@ -82,7 +91,7 @@ class DuplicateAnalyzer(BaseAnalyzer):
                     # Handle CSS selectors
                     selector = rule.selectorText
                     if selector:
-                        line = self._get_line_number(css_content, rule.selectorText)
+                        line = self._get_line_number(css_content, rule.selectorText, str(css_file))
                         results['selectors'][selector].append({
                             'file': str(css_file),
                             'line': line
@@ -92,7 +101,7 @@ class DuplicateAnalyzer(BaseAnalyzer):
                     # Handle media queries
                     media_query = rule.media.mediaText
                     if media_query:
-                        line = self._get_line_number(css_content, "@media " + rule.media.mediaText)
+                        line = self._get_line_number(css_content, "@media " + rule.media.mediaText, str(css_file))
                         results['media_queries'][media_query].append({
                             'file': str(css_file),
                             'line': line
@@ -103,7 +112,7 @@ class DuplicateAnalyzer(BaseAnalyzer):
                         if isinstance(inner_rule, cssutils.css.CSSStyleRule):
                             selector = inner_rule.selectorText
                             if selector:
-                                line = self._get_line_number(css_content, inner_rule.selectorText)
+                                line = self._get_line_number(css_content, inner_rule.selectorText, str(css_file))
                                 results['selectors'][selector].append({
                                     'file': str(css_file),
                                     'line': line
@@ -113,7 +122,7 @@ class DuplicateAnalyzer(BaseAnalyzer):
                     # Handle comments
                     comment = rule.cssText
                     if comment and comment.strip():
-                        line = self._get_line_number(css_content, rule.cssText)
+                        line = self._get_line_number(css_content, rule.cssText, str(css_file))
                         results['comments'][comment].append({
                             'file': str(css_file),
                             'line': line
@@ -309,7 +318,7 @@ class StructureAnalyzer(BaseAnalyzer):
                 
                 elif isinstance(rule, cssutils.css.CSSComment):
                     # Collect comments with correct line number
-                    line = self._get_line_number(css_content, rule.cssText)
+                    line = self._get_line_number(css_content, rule.cssText, str(css_file))
                     comment_info = {
                         'text': rule.cssText,
                         'file': str(css_file),
