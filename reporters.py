@@ -104,10 +104,13 @@ class ConsoleReporter:
             
             # Create a table with unused selectors
             unused_table = Table()
-            unused_table.add_column("Unused Selector", style="red")
+            unused_table.add_column("Selector", style="cyan")
+            unused_table.add_column("File", style="yellow")
+            unused_table.add_column("Line", style="magenta")
             
-            for selector in sorted(results['unused_selectors']):
-                unused_table.add_row(selector)
+            for selector, locations in results['unused_selectors'].items():
+                for location in locations:
+                    unused_table.add_row(selector, location['file'], str(location['line']))
             
             self.console.print(unused_table)
         else:
@@ -117,7 +120,7 @@ class ConsoleReporter:
         if results['errors']:
             self.console.print("\n[bold red]Errors:[/bold red]")
             for error in results['errors']:
-                self.console.print(f"[red]• {error}[/red]")
+                self.console.print(f"- {error}")
     
     def report_structure(self, results: Dict[str, Any]):
         """Report structure analysis results."""
@@ -439,7 +442,7 @@ class HTMLReporter:
         html = []
         
         if not results:
-            html.append('<div class="error">No analysis results available.</div>')
+            html.append('<div class="error">No data available.</div>')
             return ''.join(html)
         
         # Summary
@@ -449,7 +452,7 @@ class HTMLReporter:
         html.append('<tr><th>Metric</th><th>Count</th></tr>')
         html.append(f'<tr><td>Total Selectors</td><td>{results.get("total_selectors", 0)}</td></tr>')
         html.append(f'<tr><td>Used Selectors</td><td>{len(results.get("used_selectors", set()))}</td></tr>')
-        html.append(f'<tr><td>Unused Selectors</td><td>{len(results.get("unused_selectors", set()))}</td></tr>')
+        html.append(f'<tr><td>Unused Selectors</td><td>{len(results.get("unused_selectors", {}))}</td></tr>')
         html.append(f'<tr><td>Usage Percentage</td><td>{results.get("usage_percentage", 0):.1f}%</td></tr>')
         html.append('</table>')
         html.append('</div>')
@@ -458,10 +461,11 @@ class HTMLReporter:
         if results.get('unused_selectors'):
             html.append('<h3>Unused Selectors</h3>')
             html.append('<table>')
-            html.append('<tr><th>Unused Selector</th></tr>')
+            html.append('<tr><th>Selector</th><th>File</th><th>Line</th></tr>')
             
-            for selector in sorted(results['unused_selectors']):
-                html.append(f'<tr><td><code>{selector}</code></td></tr>')
+            for selector, locations in results['unused_selectors'].items():
+                for location in locations:
+                    html.append(f'<tr><td>{selector}</td><td>{location["file"]}</td><td>{location["line"]}</td></tr>')
             
             html.append('</table>')
         else:

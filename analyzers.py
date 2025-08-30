@@ -152,10 +152,10 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
             'error', 'success', 'warning', 'info', 'primary', 'secondary',
             'sm', 'md', 'lg', 'xl', 'xs', 'row', 'col', 'container', 'wrapper'
         }
-    
-    def _extract_css_selectors(self, css_files: List[Path]) -> Set[str]:
-        """Extract all unique CSS selectors from CSS files."""
-        selectors = set()
+
+    def _extract_css_selectors(self, css_files: List[Path]) -> Dict[str, List[Dict[str, Any]]]:
+        """Extract all CSS selectors with their locations."""
+        selectors = defaultdict(list)
         
         for css_file in css_files:
             stylesheet, css_content = self._parse_css_file(css_file)
@@ -166,38 +166,56 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
                 if isinstance(rule, cssutils.css.CSSStyleRule):
                     # Parse selector text to extract individual class and ID names
                     selector_text = rule.selectorText
+                    line = self._get_line_number(css_content, rule.selectorText, str(css_file))
                     
                     # Extract class selectors
                     class_matches = re.findall(r'\.([a-zA-Z0-9_-]+)', selector_text)
                     for match in class_matches:
                         if match not in self.excluded_selectors:
-                            selectors.add(f".{match}")
+                            selector = f".{match}"
+                            selectors[selector].append({
+                                'file': str(css_file),
+                                'line': line
+                            })
                     
                     # Extract ID selectors
                     id_matches = re.findall(r'#([a-zA-Z0-9_-]+)', selector_text)
                     for match in id_matches:
                         if match not in self.excluded_selectors:
-                            selectors.add(f"#{match}")
+                            selector = f"#{match}"
+                            selectors[selector].append({
+                                'file': str(css_file),
+                                'line': line
+                            })
                 
                 elif isinstance(rule, cssutils.css.CSSMediaRule):
                     # Check rules within media queries
                     for inner_rule in rule:
                         if isinstance(inner_rule, cssutils.css.CSSStyleRule):
                             selector_text = inner_rule.selectorText
+                            line = self._get_line_number(css_content, inner_rule.selectorText, str(css_file))
                             
                             # Extract class selectors
                             class_matches = re.findall(r'\.([a-zA-Z0-9_-]+)', selector_text)
                             for match in class_matches:
                                 if match not in self.excluded_selectors:
-                                    selectors.add(f".{match}")
+                                    selector = f".{match}"
+                                    selectors[selector].append({
+                                        'file': str(css_file),
+                                        'line': line
+                                    })
                             
                             # Extract ID selectors
                             id_matches = re.findall(r'#([a-zA-Z0-9_-]+)', selector_text)
                             for match in id_matches:
                                 if match not in self.excluded_selectors:
-                                    selectors.add(f"#{match}")
+                                    selector = f"#{match}"
+                                    selectors[selector].append({
+                                        'file': str(css_file),
+                                        'line': line
+                                    })
         
-        return selectors
+        return dict(selectors)
     
     def _find_used_selectors(self, source_files: List[Path], css_selectors: Set[str]) -> Set[str]:
         """Find which CSS selectors are actually used in source files."""
@@ -241,14 +259,14 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
     def analyze(self, css_files: List[Path], source_files: List[Path]) -> Dict[str, Any]:
         """Analyze for unused CSS selectors."""
         results = {
-            'unused_selectors': set(),
+            'unused_selectors': {},
             'used_selectors': set(),
             'total_selectors': 0,
             'usage_percentage': 0,
             'errors': []
         }
         
-        # Extract all CSS selectors
+        # Extract all CSS selectors with locations
         css_selectors = self._extract_css_selectors(css_files)
         results['total_selectors'] = len(css_selectors)
         
@@ -256,11 +274,11 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
             return results
         
         # Find used selectors
-        used_selectors = self._find_used_selectors(source_files, css_selectors)
+        used_selectors = self._find_used_selectors(source_files, set(css_selectors.keys()))
         results['used_selectors'] = used_selectors
         
-        # Calculate unused selectors
-        unused_selectors = css_selectors - used_selectors
+        # Calculate unused selectors with locations
+        unused_selectors = {k: v for k, v in css_selectors.items() if k not in used_selectors}
         results['unused_selectors'] = unused_selectors
         
         # Calculate usage percentage
