@@ -17,9 +17,10 @@ from reporters import ConsoleReporter, HTMLReporter
 from utils import get_css_files, get_source_files, parse_html_for_css
 
 console = Console()
+version="1.3.1"
 
 @click.group()
-@click.version_option()
+@click.version_option(version=version, prog_name="main.py")
 def cli():
     """A comprehensive CSS analysis tool for web projects.
     
