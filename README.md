@@ -128,6 +128,7 @@ All commands support the following options:
 - `--output-html PATH`: Generate an HTML report at the specified path
 - `--full`: Display all Tables with full rows (Default: 10 Rows)
 - `--skip`: Skips in strucutre analyse unused style sheets
+- `--vscode`: Table links get vscode:/// with line number attached
 - `--verbose, -v`: Enable verbose output for debugging
 
 ## File Support

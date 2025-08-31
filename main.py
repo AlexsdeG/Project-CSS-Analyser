@@ -40,7 +40,8 @@ def cli():
 @click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
 @click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def duplicates(path, output_html, merge, per_page_merge, page_root, full, verbose):
+@click.option('--vscode', is_flag=True, help='Open links in VS Code (vscode:// deep links).')
+def duplicates(path, output_html, merge, per_page_merge, page_root, full, verbose, vscode):
     """Find duplicate selectors, @media rules, and comments."""
     if verbose:
         console.print(f"[yellow]Analyzing duplicates in: {path}[/yellow]")
@@ -67,11 +68,11 @@ def duplicates(path, output_html, merge, per_page_merge, page_root, full, verbos
     results = analyzer.analyze(css_files, merge=merge, page_map=page_info, per_page_merge=per_page_merge)
     
     # Report results
-    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full)
+    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)
     console_reporter.report_duplicates(results, merge=merge)
     
     if output_html:
-        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full)
+        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)
         html_reporter.generate_report(results, output_html, analysis_type='duplicates', merge=merge)
         console.print(f"[green]HTML report generated: {output_html}[/green]")
 
@@ -82,7 +83,8 @@ def duplicates(path, output_html, merge, per_page_merge, page_root, full, verbos
 @click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
 @click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def unused(path, output_html, page_root, full, verbose):
+@click.option('--vscode', is_flag=True, help='Open links in VS Code (vscode:// deep links).')
+def unused(path, output_html, page_root, full, verbose, vscode):
     """Find unused CSS selectors by scanning HTML, PHP, and JS files."""
     if verbose:
         console.print(f"[yellow]Analyzing unused selectors in: {path}[/yellow]")
@@ -109,11 +111,11 @@ def unused(path, output_html, page_root, full, verbose):
     results = analyzer.analyze(css_files, source_files, page_map=page_info)
     
     # Report results
-    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full)
+    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)
     console_reporter.report_unused_selectors(results)
     
     if output_html:
-        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full)
+        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)
         html_reporter.generate_report(results, output_html, analysis_type='unused')
         console.print(f"[green]HTML report generated: {output_html}[/green]")
 
@@ -125,7 +127,8 @@ def unused(path, output_html, page_root, full, verbose):
 @click.option('--skip', is_flag=True, help='Only include CSS files referenced by pages (requires --page-root or defaults to PATH).')
 @click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def structure(path, output_html, page_root, skip, full, verbose):
+@click.option('--vscode', is_flag=True, help='Open links in VS Code (vscode:// deep links).')
+def structure(path, output_html, page_root, skip, full, verbose, vscode):
     """Analyze CSS structure for prefixes, comments, and patterns."""
     if verbose:
         console.print(f"[yellow]Analyzing CSS structure in: {path}[/yellow]")
@@ -153,11 +156,11 @@ def structure(path, output_html, page_root, skip, full, verbose):
     results = analyzer.analyze(css_files, page_map=pages, skip_unreferenced=skip)
     
     # Report results
-    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full)
+    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)
     console_reporter.report_structure(results)
     
     if output_html:
-        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full)
+        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)
         html_reporter.generate_report(results, output_html, analysis_type='structure')
         console.print(f"[green]HTML report generated: {output_html}[/green]")
 
@@ -168,7 +171,8 @@ def structure(path, output_html, page_root, skip, full, verbose):
 @click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
 @click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def analyze(path, output_html, page_root, full, verbose):
+@click.option('--vscode', is_flag=True, help='Open links in VS Code (vscode:// deep links).')
+def analyze(path, output_html, page_root, full, verbose, vscode):
     """Run all analyses (duplicates, unused, structure)."""
     if verbose:
         console.print(f"[yellow]Running comprehensive analysis on: {path}[/yellow]")
@@ -206,11 +210,11 @@ def analyze(path, output_html, page_root, full, verbose):
     all_results['structure'] = structure_analyzer.analyze(css_files, page_map=page_info.get('pages') if page_info else None)
     
     # Report results
-    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full)
+    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)
     console_reporter.report_comprehensive(all_results)
     
     if output_html:
-        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full)
+        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)
         html_reporter.generate_comprehensive_report(all_results, output_html)
         console.print(f"[green]Comprehensive HTML report generated: {output_html}[/green]")
 

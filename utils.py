@@ -60,6 +60,19 @@ def make_file_href(p: Path) -> str:
     except Exception:
         # Fallback: quote path but keep ':' and '/' safe (avoid encoding drive colon).
         return "file:///" + quote(p.as_posix(), safe='/:')
+        
+
+def make_vscode_href(p: Path, line: int | None = None) -> str:
+    """Build a vscode:// deep link that opens a file (and optional line) in VS Code."""
+    p = to_abs(p)
+    # VS Code expects a POSIX-like path with drive letter (lowercase recommended)
+    posix_path = p.as_posix()
+    # Lowercase drive letter if present like 'D:/...'
+    if re.match(r'^[A-Za-z]:/', posix_path):
+        posix_path = posix_path[0].lower() + posix_path[1:]
+    if line and isinstance(line, int) and line > 0:
+        return f"vscode://file/{posix_path}:{line}"
+    return f"vscode://file/{posix_path}"
 
 def make_rel_label(p: Path, project_root: Path) -> str:
     """Return a label like "\\sample_project\\style.css" relative to project_root.

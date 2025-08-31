@@ -14,17 +14,19 @@ from utils import (
     make_console_link_text,
     make_html_link,
     DEFAULT_TABLE_CAP,
+    make_vscode_href,
 )
 
 
 class ConsoleReporter:
     """Handles console reporting using rich library."""
 
-    def __init__(self, project_root: Path = None, full: bool = False):
+    def __init__(self, project_root: Path = None, full: bool = False, use_vscode: bool = False):
         self.console = Console()
         self.project_root = Path(project_root).resolve() if project_root else None
         self.full = full
         self.table_cap = None if full else DEFAULT_TABLE_CAP
+        self.use_vscode = use_vscode
 
     def _link_cell(self, path_str: str) -> str:
         """Render a rich-styled clickable link for a file path."""
@@ -33,7 +35,7 @@ class ConsoleReporter:
         except Exception:
             return path_str
         label = make_rel_label(p, self.project_root or p.parent)
-        href = make_file_href(p)
+        href = make_vscode_href(p) if self.use_vscode else make_file_href(p)
         text, style = make_console_link_text(label, href)
         return f"[{style}]{text}[/]"
 
@@ -43,13 +45,32 @@ class ConsoleReporter:
         Handles Windows drive letters by splitting on the last colon.
         """
         if not isinstance(value, str) or ":" not in value:
-            return value
+            return self._link_cell(value)
+
         idx = value.rfind(":")
         maybe_line = value[idx + 1 :]
         file_part = value[:idx]
-        if maybe_line.isdigit():
-            return f"{self._link_cell(file_part)}:{maybe_line}"
-        return value
+
+        # If the tail isn't a pure integer, just link the whole thing as a file path
+        if not maybe_line.isdigit():
+            return self._link_cell(value)
+
+        try:
+            p = Path(file_part).resolve()
+        except Exception:
+            return value
+
+        # Label like \relative\path.css:123
+        label = make_rel_label(p, self.project_root or p.parent) + f":{maybe_line}"
+
+        # If VS Code deep links are enabled, make a vscode:// link to jump to the line.
+        # Otherwise, keep a normal file link and show the line as text.
+        if self.use_vscode:
+            href = make_vscode_href(p, int(maybe_line))
+            text, style = make_console_link_text(label, href)
+            return f"[{style}]{text}[/]"
+        else:
+            return f"{self._link_cell(str(p))}:{maybe_line}"
 
     def _maybe_cap(self, seq: List[Any]) -> List[Any]:
         if self.full or self.table_cap is None:
@@ -73,9 +94,14 @@ class ConsoleReporter:
             shown = self._maybe_cap(items)
             for selector, locations in shown:
                 count = len(locations)
-                locations_str = "\n".join(
-                    [f"{self._link_cell(loc['file'])}:{loc['line']}" for loc in locations]
-                )
+                if self.use_vscode:
+                    locations_str = "\n".join(
+                        [self._format_file_line(f"{loc['file']}:{loc['line']}") for loc in locations]
+                    )
+                else:
+                    locations_str = "\n".join(
+                        [f"{self._link_cell(loc['file'])}:{loc['line']}" for loc in locations]
+                    )
                 selector_table.add_row(selector, str(count), locations_str)
 
             self.console.print(selector_table)
@@ -99,9 +125,14 @@ class ConsoleReporter:
             shown = self._maybe_cap(items)
             for mq, locations in shown:
                 count = len(locations)
-                locations_str = "\n".join(
-                    [f"{self._link_cell(loc['file'])}:{loc['line']}" for loc in locations]
-                )
+                if self.use_vscode:
+                    locations_str = "\n".join(
+                        [self._format_file_line(f"{loc['file']}:{loc['line']}") for loc in locations]
+                    )
+                else:
+                    locations_str = "\n".join(
+                        [f"{self._link_cell(loc['file'])}:{loc['line']}" for loc in locations]
+                    )
                 media_table.add_row(mq, str(count), locations_str)
 
             self.console.print(media_table)
@@ -125,9 +156,14 @@ class ConsoleReporter:
             shown = self._maybe_cap(items)
             for comment, locations in shown:
                 count = len(locations)
-                locations_str = "\n".join(
-                    [f"{self._link_cell(loc['file'])}:{loc['line']}" for loc in locations]
-                )
+                if self.use_vscode:
+                    locations_str = "\n".join(
+                        [self._format_file_line(f"{loc['file']}:{loc['line']}") for loc in locations]
+                    )
+                else:
+                    locations_str = "\n".join(
+                        [f"{self._link_cell(loc['file'])}:{loc['line']}" for loc in locations]
+                    )
                 comment_table.add_row(comment, str(count), locations_str)
 
             self.console.print(comment_table)
@@ -251,7 +287,12 @@ class ConsoleReporter:
                     rows.append((selector, loc.get("file", ""), loc.get("line", "")))
             shown = self._maybe_cap(rows)
             for selector, file_path, line in shown:
-                unused_table.add_row(selector, self._link_cell(file_path), str(line))
+                file_cell = (
+                    self._format_file_line(f"{file_path}:{line}")
+                    if self.use_vscode and str(line).isdigit()
+                    else self._link_cell(file_path)
+                )
+                unused_table.add_row(selector, file_cell, str(line))
             self.console.print(unused_table)
             if not self.full and len(rows) > len(shown):
                 self.console.print(
@@ -336,8 +377,13 @@ class ConsoleReporter:
                     if len(comment.get("text", "")) > 80
                     else comment.get("text", "")
                 )
+                file_cell = (
+                    self._format_file_line(f"{comment.get('file','')}:{comment.get('line','')}")
+                    if self.use_vscode and str(comment.get("line", "")).isdigit()
+                    else self._link_cell(comment.get("file", ""))
+                )
                 comments_table.add_row(
-                    self._link_cell(comment.get("file", "")),
+                    file_cell,
                     str(comment.get("line", "")),
                     comment_text,
                 )
@@ -411,11 +457,12 @@ class ConsoleReporter:
 class HTMLReporter:
     """Handles HTML report generation."""
 
-    def __init__(self, project_root: Path = None, full: bool = False):
+    def __init__(self, project_root: Path = None, full: bool = False, use_vscode: bool = False):
         self.template = self._load_template()
         self.project_root = Path(project_root).resolve() if project_root else None
         self.full = full
         self.table_cap = None if full else DEFAULT_TABLE_CAP
+        self.use_vscode = use_vscode
 
     def _ensure_reports_folder(self):
         """Ensure the reports folder exists."""
@@ -486,18 +533,31 @@ class HTMLReporter:
         except Exception:
             return path_str
         label = make_rel_label(p, self.project_root or p.parent)
-        href = make_file_href(p)
+        href = make_vscode_href(p) if self.use_vscode else make_file_href(p)
         return make_html_link(label, href)
 
     def _format_file_line_html(self, value: str) -> str:
+        """Format 'file:line' into an HTML link that can jump to the line in VS Code."""
         if not isinstance(value, str) or ":" not in value:
-            return value
+            return self._make_link(value)
+
         idx = value.rfind(":")
         maybe_line = value[idx + 1 :]
         file_part = value[:idx]
-        if maybe_line.isdigit():
-            return f"{self._make_link(file_part)}:{maybe_line}"
-        return value
+
+        try:
+            p = Path(file_part).resolve()
+        except Exception:
+            return value
+
+        label = make_rel_label(p, self.project_root or p.parent) + (f":{maybe_line}" if maybe_line.isdigit() else "")
+        if self.use_vscode and maybe_line.isdigit():
+            href = make_vscode_href(p, int(maybe_line))
+            return make_html_link(label, href)
+        else:
+            # Fallback to plain file link; preserve visible ":line" text in label
+            href = make_file_href(p)
+            return make_html_link(label, href)
 
     def _maybe_cap(self, seq: List[Any]) -> List[Any]:
         if self.full or self.table_cap is None:
@@ -621,7 +681,10 @@ class HTMLReporter:
             shown = self._maybe_cap(items)
             for selector, locations in shown:
                 count = len(locations)
-                locs = [f"{self._make_link(loc['file'])}:{loc['line']}" for loc in locations]
+                if self.use_vscode:
+                    locs = [self._format_file_line_html(f"{loc['file']}:{loc['line']}") for loc in locations]
+                else:
+                    locs = [f"{self._make_link(loc['file'])}:{loc['line']}" for loc in locations]
                 locations_str = "<br>".join(locs)
                 html.append(f"<tr><td>{selector}</td><td>{count}</td><td>{locations_str}</td></tr>")
             html.append("</table>")
@@ -640,7 +703,10 @@ class HTMLReporter:
             shown = self._maybe_cap(items)
             for mq, locations in shown:
                 count = len(locations)
-                locs = [f"{self._make_link(loc['file'])}:{loc['line']}" for loc in locations]
+                if self.use_vscode:
+                    locs = [self._format_file_line_html(f"{loc['file']}:{loc['line']}") for loc in locations]
+                else:
+                    locs = [f"{self._make_link(loc['file'])}:{loc['line']}" for loc in locations]
                 locations_str = "<br>".join(locs)
                 html.append(f"<tr><td>{mq}</td><td>{count}</td><td>{locations_str}</td></tr>")
             html.append("</table>")
@@ -659,7 +725,10 @@ class HTMLReporter:
             shown = self._maybe_cap(items)
             for comment, locations in shown:
                 count = len(locations)
-                locs = [f"{self._make_link(loc['file'])}:{loc['line']}" for loc in locations]
+                if self.use_vscode:
+                    locs = [self._format_file_line_html(f"{loc['file']}:{loc['line']}") for loc in locations]
+                else:
+                    locs = [f"{self._make_link(loc['file'])}:{loc['line']}" for loc in locations]
                 locations_str = "<br>".join(locs)
                 html.append(f"<tr><td>{comment}</td><td>{count}</td><td>{locations_str}</td></tr>")
             html.append("</table>")
@@ -779,8 +848,13 @@ class HTMLReporter:
                     rows.append((selector, location.get("file", ""), location.get("line", "")))
             shown = self._maybe_cap(rows)
             for selector, file_path, line in shown:
+                file_cell = (
+                    self._format_file_line_html(f"{file_path}:{line}")
+                    if self.use_vscode and str(line).isdigit()
+                    else self._make_link(file_path)
+                )
                 html.append(
-                    f"<tr><td>{selector}</td><td>{self._make_link(file_path)}</td><td>{line}</td></tr>"
+                    f"<tr><td>{selector}</td><td>{file_cell}</td><td>{line}</td></tr>"
                 )
             html.append("</table>")
             if not self.full and len(rows) > len(shown):
@@ -862,8 +936,13 @@ class HTMLReporter:
             for comment in shown:
                 text = comment.get("text", "")
                 comment_text = text[:80] + "..." if len(text) > 80 else text
+                file_cell = (
+                    self._format_file_line_html(f"{comment.get('file','')}:{comment.get('line','')}")
+                    if self.use_vscode and str(comment.get('line','')).isdigit()
+                    else self._make_link(comment.get('file',''))
+                )
                 html.append(
-                    f"<tr><td>{self._make_link(comment.get('file',''))}</td><td>{comment.get('line','')}</td><td><code>{comment_text}</code></td></tr>"
+                    f"<tr><td>{file_cell}</td><td>{comment.get('line','')}</td><td><code>{comment_text}</code></td></tr>"
                 )
 
             html.append("</table>")
