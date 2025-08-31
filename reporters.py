@@ -339,24 +339,25 @@ class ConsoleReporter:
 
         # Prefix analysis
         prefixes = results.get("prefixes", {})
-        if prefixes:
-            self.console.print("\n[bold blue]Class Prefix Analysis:[/bold blue]")
-            prefix_table = Table(title="Class Prefixes")
+        filtered = [(k, v) for k, v in prefixes.items() if v >= 2]
+        if filtered:
+            self.console.print("\n[bold blue]Prefix Analysis (classes and IDs):[/bold blue]")
+            prefix_table = Table(title="Prefixes")
             prefix_table.add_column("Prefix", style="cyan")
             prefix_table.add_column("Count", style="magenta")
-            prefix_table.add_column("Example Classes", style="yellow")
-            sorted_prefixes = sorted(prefixes.items(), key=lambda x: x[1], reverse=True)
+            prefix_table.add_column("Example Tokens", style="yellow")
+            sorted_prefixes = sorted(filtered, key=lambda x: x[1], reverse=True)
             shown = sorted_prefixes if self.full else sorted_prefixes[: (self.table_cap or DEFAULT_TABLE_CAP)]
             for prefix, count in shown:
                 classes = results.get("prefix_groups", {}).get(prefix, [])
-                example = ", ".join(classes[:3])
+                example_classes = ", ".join(classes[:3])
                 if len(classes) > 3:
-                    example += f" (+{len(classes) - 3} more)"
-                prefix_table.add_row(prefix, str(count), example)
+                    example_classes += f" (+{len(classes) - 3} more)"
+                prefix_table.add_row(prefix, str(count), example_classes)
             self.console.print(prefix_table)
             if not self.full and len(sorted_prefixes) > len(shown):
                 self.console.print(
-                    f"[yellow]Showing {len(shown)} of {len(sorted_prefixes)} prefixes. Use --full to show all.[/yellow]"
+                    f"[yellow]Showing {len(shown)} of {len(sorted_prefixes)} prefixes (count ≥ 2). Use --full to show all.[/yellow]"
                 )
 
         # Comments
@@ -904,26 +905,28 @@ class HTMLReporter:
         # Prefix analysis
         prefixes = results.get("prefixes", {})
         if prefixes:
-            html.append("<h3>Class Prefix Analysis</h3>")
-            html.append("<table>")
-            html.append("<tr><th>Prefix</th><th>Count</th><th>Example Classes</th></tr>")
+            filtered = [(k, v) for k, v in prefixes.items() if v >= 2]
+            if filtered:
+                html.append("<h3>Prefix Analysis (classes and IDs)</h3>")
+                html.append("<table>")
+                html.append("<tr><th>Prefix</th><th>Count</th><th>Example Tokens</th></tr>")
 
-            sorted_prefixes = sorted(prefixes.items(), key=lambda x: x[1], reverse=True)
-            shown = sorted_prefixes if self.full else sorted_prefixes[: (self.table_cap or DEFAULT_TABLE_CAP)]
-            for prefix, count in shown:
-                classes = results.get("prefix_groups", {}).get(prefix, [])
-                example_classes = ", ".join(classes[:3])
-                if len(classes) > 3:
-                    example_classes += f" (+{len(classes) - 3} more)"
-                html.append(
-                    f"<tr><td><code>{prefix}</code></td><td>{count}</td><td>{example_classes}</td></tr>"
-                )
+                sorted_prefixes = sorted(filtered, key=lambda x: x[1], reverse=True)
+                shown = sorted_prefixes if self.full else sorted_prefixes[: (self.table_cap or DEFAULT_TABLE_CAP)]
+                for prefix, count in shown:
+                    classes = results.get("prefix_groups", {}).get(prefix, [])
+                    example_classes = ", ".join(classes[:3])
+                    if len(classes) > 3:
+                        example_classes += f" (+{len(classes) - 3} more)"
+                    html.append(
+                        f"<tr><td><code>{prefix}</code></td><td>{count}</td><td>{example_classes}</td></tr>"
+                    )
 
-            html.append("</table>")
-            if not self.full and len(sorted_prefixes) > len(shown):
-                html.append(
-                    f"<p><em>Showing {len(shown)} of {len(sorted_prefixes)} prefixes. Use --full to show all.</em></p>"
-                )
+                html.append("</table>")
+                if not self.full and len(sorted_prefixes) > len(shown):
+                    html.append(
+                        f"<p><em>Showing {len(shown)} of {len(sorted_prefixes)} prefixes (count ≥ 2). Use --full to show all.</em></p>"
+                    )
 
         # Comments
         comments = results.get("comments", [])

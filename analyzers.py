@@ -550,7 +550,9 @@ class StructureAnalyzer(BaseAnalyzer):
     
     def __init__(self):
         super().__init__()
-        self.prefix_pattern = re.compile(r'\.([a-zA-Z0-9_-]+)-')
+        # Prefix separators to consider inside class/id names (BEM-style and common patterns)
+        # We treat one or more '-' or '_' as a separator boundary.
+        self._prefix_splitter = re.compile(r'[-_]+')
     
     def analyze(self, css_files: List[Path], page_map: Dict[str, Any] = None, skip_unreferenced: bool = False) -> Dict[str, Any]:
         """Analyze CSS structure for prefixes, comments, and patterns.
@@ -635,14 +637,39 @@ class StructureAnalyzer(BaseAnalyzer):
         return results
     
     def _analyze_prefixes(self, selector_text: str, results: Dict[str, Any]):
-        """Analyze class prefixes in selector text."""
-        # Extract class names
+        """Analyze prefixes in selector text for both classes and IDs.
+
+        Prefix is defined as the substring before the first occurrence of '-' or '_'
+        within the class or id name. Names without these separators are ignored.
+        """
+        # Extract class and id names
         class_matches = re.findall(r'\.([a-zA-Z0-9_-]+)', selector_text)
-        
-        for class_name in class_matches:
-            # Find prefix (everything before the last hyphen)
-            prefix_match = self.prefix_pattern.match(f".{class_name}")
-            if prefix_match:
-                prefix = prefix_match.group(1)
-                results['prefixes'][prefix] += 1
-                results['prefix_groups'][prefix].append(class_name)
+        id_matches = re.findall(r'#([a-zA-Z0-9_-]+)', selector_text)
+
+        def record(name: str, kind: str):
+            # Determine prefix from separators first, then camelCase/PascalCase as fallback
+            prefix: str | None = None
+            parts = self._prefix_splitter.split(name, 1)
+            if len(parts) >= 2 and parts[0]:
+                prefix = parts[0]
+            else:
+                # Camel/PascalCase: split into word chunks; need at least two chunks to infer a prefix
+                # Examples: headerHelper -> ['header','Helper']
+                #           HeaderItem   -> ['Header','Item']
+                #           XMLParser    -> ['XML','Parser']
+                chunks = re.findall(r'[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+', name)
+                if len(chunks) >= 2 and chunks[0]:
+                    prefix = chunks[0]
+            if not prefix:
+                return
+            # Normalize prefix to lowercase for grouping consistency
+            norm_prefix = prefix.lower()
+            results['prefixes'][norm_prefix] += 1
+            # Store the original token with its sigil for clarity (e.g., .btn-primary, #header_main)
+            label = f".{name}" if kind == 'class' else f"#{name}"
+            results['prefix_groups'][norm_prefix].append(label)
+
+        for cname in class_matches:
+            record(cname, 'class')
+        for iname in id_matches:
+            record(iname, 'id')
