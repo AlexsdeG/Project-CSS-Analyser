@@ -635,39 +635,56 @@ class StructureAnalyzer(BaseAnalyzer):
 
         results['errors'] = self.errors
         return results
-    
+
     def _analyze_prefixes(self, selector_text: str, results: Dict[str, Any]):
         """Analyze prefixes in selector text for both classes and IDs.
 
-        Prefix is defined as the substring before the first occurrence of '-' or '_'
-        within the class or id name. Names without these separators are ignored.
+        Advanced prefix detection:
+        - For names containing '-' or '_' (including multiple or mixed in a row),
+          record hierarchical prefixes at each boundary, e.g.,
+          "note_highlight_bg" -> ["note", "note_highlight"],
+          "nt-note-item" -> ["nt", "nt_note"]. Mixed or repeated separators are treated
+          as a single boundary and normalized with '_'.
+        - If no separators are present, fall back to camelCase/PascalCase tokenization and
+          record cumulative prefixes across word chunks, e.g.,
+          "HeaderListItem" -> ["header", "header_list"], "headerHelper" -> ["header"].
+        - Numeric suffixes are handled via tokenization: e.g., "body1" -> ["body"].
         """
         # Extract class and id names
         class_matches = re.findall(r'\.([a-zA-Z0-9_-]+)', selector_text)
         id_matches = re.findall(r'#([a-zA-Z0-9_-]+)', selector_text)
 
         def record(name: str, kind: str):
-            # Determine prefix from separators first, then camelCase/PascalCase as fallback
-            prefix: str | None = None
-            parts = self._prefix_splitter.split(name, 1)
-            if len(parts) >= 2 and parts[0]:
-                prefix = parts[0]
+            prefixes_to_add: list[str] = []
+            # Prefer separator-based hierarchical prefixes
+            if '-' in name or '_' in name:
+                all_parts = [p for p in self._prefix_splitter.split(name) if p]
+                if len(all_parts) >= 2:
+                    # Build cumulative prefixes up to n-1 parts; normalize separator as '_'
+                    for i in range(1, len(all_parts)):
+                        prefixes_to_add.append("_".join(all_parts[:i]))
             else:
-                # Camel/PascalCase: split into word chunks; need at least two chunks to infer a prefix
-                # Examples: headerHelper -> ['header','Helper']
-                #           HeaderItem   -> ['Header','Item']
-                #           XMLParser    -> ['XML','Parser']
+                # Camel/PascalCase tokenization (includes numeric chunks)
                 chunks = re.findall(r'[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+', name)
-                if len(chunks) >= 2 and chunks[0]:
-                    prefix = chunks[0]
-            if not prefix:
+                # Need at least two chunks; build cumulative prefixes up to n-1
+                if len(chunks) >= 2:
+                    chunks_lower = [c.lower() for c in chunks]
+                    for i in range(1, len(chunks_lower)):
+                        prefixes_to_add.append("_".join(chunks_lower[:i]))
+
+            if not prefixes_to_add:
                 return
-            # Normalize prefix to lowercase for grouping consistency
-            norm_prefix = prefix.lower()
-            results['prefixes'][norm_prefix] += 1
-            # Store the original token with its sigil for clarity (e.g., .btn-primary, #header_main)
+
             label = f".{name}" if kind == 'class' else f"#{name}"
-            results['prefix_groups'][norm_prefix].append(label)
+            # Deduplicate within this token to avoid double counting same prefix (edge cases)
+            seen_local: set[str] = set()
+            for p in prefixes_to_add:
+                norm_prefix = p.lower()
+                if not norm_prefix or norm_prefix in seen_local:
+                    continue
+                seen_local.add(norm_prefix)
+                results['prefixes'][norm_prefix] += 1
+                results['prefix_groups'][norm_prefix].append(label)
 
         for cname in class_matches:
             record(cname, 'class')

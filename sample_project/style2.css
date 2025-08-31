@@ -8,6 +8,18 @@
     background-color: yellow;
 }
 
+.note_highlight_bg {
+    background-color: yellow;
+}
+
+.note_highlight_fg {
+    background-color: yellow;
+}
+
+.note_highlight-font {
+    font-size: 20px;
+}
+
 .note_bg {
     background-color: darkgray;
 }
