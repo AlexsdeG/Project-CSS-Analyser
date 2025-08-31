@@ -57,6 +57,12 @@ css-analyzer duplicates ./path/to/project/
 # Generate HTML report
 css-analyzer duplicates ./path/to/project/ --output-html report.html
 
+# Merge duplicates honoring load order (global)
+css-analyzer duplicates ./path/to/project/ --merge --page-root ./path/to/pages
+
+# Merge per page (when load order differs across pages)
+css-analyzer duplicates ./path/to/project/ --merge --per-page-merge --page-root ./path/to/pages
+
 # Enable verbose output
 css-analyzer duplicates ./path/to/project/ --verbose
 ```
@@ -74,6 +80,9 @@ python -m main duplicates ./path/to/project --merge
 
 # Generate HTML report
 css-analyzer unused ./path/to/project/ --output-html unused-report.html
+
+# Page-aware unused detection and unused CSS files
+css-analyzer unused ./path/to/project/ --page-root ./path/to/pages
 
 # Enable verbose output
 css-analyzer unused ./path/to/project/ --verbose
@@ -113,7 +122,9 @@ css-analyzer analyze ./path/to/project/ --verbose
 
 All commands support the following options:
 
-- `--merge`: Generate merged CSS rules for duplicate selectors
+- `--merge`: Generate merged CSS rules for duplicate selectors (uses CSS cascade: !important beats normal; later overrides earlier when priorities equal)
+- `--per-page-merge`: Also produce merged CSS per page using each page's concrete load order
+- `--page-root PATH`: Directory where HTML/PHP pages live (used to compute CSS load order and unused CSS files). Defaults to the provided PATH.
 - `--output-html PATH`: Generate an HTML report at the specified path
 - `--verbose, -v`: Enable verbose output for debugging
 
@@ -211,14 +222,17 @@ This will run all analyses (duplicates, unused selectors, structure) and generat
 1. **CSS Parsing**: Uses `cssutils` to parse CSS files and extract selectors, media queries, and comments
 2. **Duplicate Detection**: Identifies identical items across files
 3. **Location Tracking**: Records file paths and line numbers for each duplicate
-4. **Reporting**: Generates reports showing duplicates and their locations
+4. **Load Order & Merging**: When `--merge` is used, HTML/PHP pages are scanned to determine CSS load order (including `@import` chains). Merged CSS honors the cascade: `!important` beats normal; when priorities are equal, later declarations win. When load order differs per page, use `--per-page-merge`.
+5. **Conflicts & Overrides**: Reports where declarations override or are blocked (e.g., `important-blocks-normal`, `important-vs-important`, `later-overrides-earlier`). Dynamic JS-injected CSS is marked as uncertain.
+6. **Reporting**: Generates console and HTML sections for load order, conflicts, and merged CSS (global and optional per-page)
 
 ### Unused Selector Detection
 
 1. **CSS Selector Extraction**: Extracts all class and ID selectors from CSS files
-2. **Source File Scanning**: Scans HTML, PHP, and JS files for selector usage
-3. **Usage Detection**: Uses regex patterns to find selectors in `class` and `id` attributes
-4. **Comparison**: Compares CSS selectors against found usage to identify unused selectors
+2. **Page Map**: Scans HTML/PHP to collect which CSS files each page loads (plus `@import`). Naive JS patterns are also detected and marked as uncertain.
+3. **Source File Scanning**: Scans HTML, PHP, and JS files for selector usage
+4. **Usage Detection**: Uses regex patterns to find selectors in `class` and `id` attributes. A selector is considered used only if it appears on a page that includes a CSS file where the selector is defined.
+5. **Unused CSS Files**: CSS files not included by any page are listed under "Unused CSS Files".
 
 ### Structure Analysis
 
@@ -230,6 +244,7 @@ This will run all analyses (duplicates, unused selectors, structure) and generat
 ## Limitations
 
 - **Dynamic Selectors**: Cannot detect selectors that are dynamically generated in JavaScript
+- **Dynamic CSS Injection**: Load order for CSS injected via JavaScript is marked as uncertain; results may differ at runtime.
 - **Framework Classes**: Some framework/utility classes are excluded by default but may be used dynamically
 - **Complex Selectors**: Very complex CSS selectors may not be accurately parsed
 - **Encoding Issues**: Some files with unusual encodings may not be read correctly

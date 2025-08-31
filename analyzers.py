@@ -72,14 +72,39 @@ class BaseAnalyzer:
 class DuplicateAnalyzer(BaseAnalyzer):
     """Analyzer for finding duplicate CSS selectors, media queries, and comments."""
     
-    def analyze(self, css_files: List[Path], merge: bool = False) -> Dict[str, Any]:
-        """Analyze CSS files for duplicates."""
+    def analyze(self, css_files: List[Path], merge: bool = False, page_map: Dict[str, Any] = None, per_page_merge: bool = False) -> Dict[str, Any]:
+        """Analyze CSS files for duplicates.
+
+        Args:
+            css_files: List of CSS files to analyze
+            merge: When True, produce merged CSS blocks honoring cascade
+            page_map: Either a dict of pages -> {css_chain, uncertain_css} or the
+                      full parse_html_for_css() result containing keys 'pages',
+                      'all_css', 'unreferenced_css'. If provided, merging and
+                      warnings will respect per-page load order and ignore
+                      unreferenced CSS in global merge.
+            per_page_merge: When True, also compute merged CSS per page.
+        """
         results = {
             'selectors': defaultdict(list),
             'media_queries': defaultdict(list),
             'comments': defaultdict(list),
-            'errors': []
+            'errors': [],
+            'warnings': [],
         }
+
+        # Normalize page mapping
+        pages = None
+        unreferenced_css = []
+        if page_map:
+            if 'pages' in page_map:
+                pages = page_map.get('pages', {})
+                unreferenced_css = page_map.get('unreferenced_css', [])
+            else:
+                pages = page_map
+        results['load_order'] = {k: v.get('css_chain', []) for k, v in (pages or {}).items()}
+        if unreferenced_css:
+            results['unreferenced_css'] = list(unreferenced_css)
         
         for css_file in css_files:
             stylesheet, css_content = self._parse_css_file(css_file)
@@ -93,7 +118,7 @@ class DuplicateAnalyzer(BaseAnalyzer):
                     if selector:
                         line = self._get_line_number(css_content, rule.selectorText, str(css_file))
                         location = {
-                            'file': str(css_file),
+                            'file': str(Path(css_file).resolve()),
                             'line': line
                         }
                         if merge:
@@ -106,7 +131,7 @@ class DuplicateAnalyzer(BaseAnalyzer):
                     if media_query:
                         line = self._get_line_number(css_content, "@media " + rule.media.mediaText, str(css_file))
                         results['media_queries'][media_query].append({
-                            'file': str(css_file),
+                            'file': str(Path(css_file).resolve()),
                             'line': line
                         })
                     
@@ -117,7 +142,7 @@ class DuplicateAnalyzer(BaseAnalyzer):
                             if selector:
                                 line = self._get_line_number(css_content, inner_rule.selectorText, str(css_file))
                                 location = {
-                                    'file': str(css_file),
+                                    'file': str(Path(css_file).resolve()),
                                     'line': line
                                 }
                                 if merge:
@@ -130,7 +155,7 @@ class DuplicateAnalyzer(BaseAnalyzer):
                     if comment and comment.strip():
                         line = self._get_line_number(css_content, rule.cssText, str(css_file))
                         results['comments'][comment].append({
-                            'file': str(css_file),
+                            'file': str(Path(css_file).resolve()),
                             'line': line
                         })
         
@@ -139,43 +164,185 @@ class DuplicateAnalyzer(BaseAnalyzer):
         results['media_queries'] = {k: v for k, v in results['media_queries'].items() if len(v) > 1}
         results['comments'] = {k: v for k, v in results['comments'].items() if len(v) > 1}
         
-        # Generate merged CSS if requested
+        # Helper: format merged CSS from a prop map
+        def format_merged_block(selector: str, merged_props: Dict[str, Dict[str, str]]) -> str:
+            merged_style = cssutils.css.CSSStyleDeclaration()
+            for name, data in merged_props.items():
+                merged_style.setProperty(name, data['value'], data['priority'])
+            properties = []
+            for prop in merged_style:
+                important = ' !important' if prop.priority == 'important' else ''
+                properties.append(f"    {prop.name}: {prop.value}{important};")
+            return f"{selector} {{\n" + "\n".join(properties) + "\n}"
+
+        # Helper: merge a list of locations in a specified order and collect warnings
+        def merge_locations(selector: str, ordered_locs: List[Dict[str, Any]], page: str = None) -> Tuple[Dict[str, Dict[str, str]], List[Dict[str, Any]]]:
+            merged_props: Dict[str, Dict[str, str]] = {}
+            prop_origin: Dict[str, Dict[str, Any]] = {}  # name -> origin location
+            warnings_local: List[Dict[str, Any]] = []
+            for loc in ordered_locs:
+                if 'rule' not in loc:
+                    continue
+                for prop in loc['rule'].style:
+                    name = prop.name
+                    value = prop.value
+                    priority = prop.priority
+                    origin = {'file': loc['file'], 'line': loc['line']}
+
+                    if name not in merged_props:
+                        merged_props[name] = {'value': value, 'priority': priority}
+                        prop_origin[name] = origin
+                        continue
+
+                    existing_priority = merged_props[name]['priority']
+                    existing_origin = prop_origin[name]
+
+                    if existing_priority == 'important' and priority != 'important':
+                        # Important blocks normal later declaration
+                        warnings_local.append({
+                            'type': 'important-blocks-normal',
+                            'selector': selector,
+                            'property': name,
+                            'from': f"{existing_origin['file']}:{existing_origin['line']}",
+                            'to': f"{origin['file']}:{origin['line']}",
+                            'reason': 'Earlier !important prevents later normal declaration from applying',
+                            'page': page
+                        })
+                        continue
+
+                    if priority == 'important' and existing_priority != 'important':
+                        # Later important overrides earlier normal
+                        warnings_local.append({
+                            'type': 'later-overrides-earlier',
+                            'selector': selector,
+                            'property': name,
+                            'from': f"{existing_origin['file']}:{existing_origin['line']}",
+                            'to': f"{origin['file']}:{origin['line']}",
+                            'reason': 'Later !important overrides earlier normal',
+                            'page': page
+                        })
+                        merged_props[name] = {'value': value, 'priority': priority}
+                        prop_origin[name] = origin
+                        continue
+
+                    # Same priority case
+                    if priority == existing_priority == 'important':
+                        warnings_local.append({
+                            'type': 'important-vs-important',
+                            'selector': selector,
+                            'property': name,
+                            'from': f"{existing_origin['file']}:{existing_origin['line']}",
+                            'to': f"{origin['file']}:{origin['line']}",
+                            'reason': 'Later !important overrides earlier !important',
+                            'page': page
+                        })
+                    elif priority == existing_priority:
+                        warnings_local.append({
+                            'type': 'later-overrides-earlier',
+                            'selector': selector,
+                            'property': name,
+                            'from': f"{existing_origin['file']}:{existing_origin['line']}",
+                            'to': f"{origin['file']}:{origin['line']}",
+                            'reason': 'Later declaration overrides earlier declaration',
+                            'page': page
+                        })
+
+                    # Replace in both same-priority cases
+                    merged_props[name] = {'value': value, 'priority': priority}
+                    prop_origin[name] = origin
+
+            return merged_props, warnings_local
+
+        # Build a quick lookup of line ordering per file to ensure stable sort within file
+        def sort_key_for_page(page_css_order: List[str], loc: Dict[str, Any]) -> Tuple[int, int]:
+            file_to_index = {p: i for i, p in enumerate(page_css_order)}
+            fi = file_to_index.get(loc['file'], 10**9)
+            li = loc.get('line') or 10**6
+            return (fi, li)
+
         if merge and results['selectors']:
+            # Global merged (filtered to referenced CSS if pages provided)
             results['merged'] = {}
+            referenced_css: Set[str] = set()
+            if pages:
+                for pg in pages.values():
+                    for p in pg.get('css_chain', []):
+                        referenced_css.add(p)
+            # Determine a global order from pages if available
+            global_order: List[str] = []
+            if pages:
+                seen: Set[str] = set()
+                for page_path, pdata in pages.items():
+                    for cssp in pdata.get('css_chain', []):
+                        if cssp not in seen:
+                            seen.add(cssp)
+                            global_order.append(cssp)
+                # Append any referenced CSS not in any chain (shouldn't happen often)
+                for cssp in sorted(referenced_css):
+                    if cssp not in seen:
+                        global_order.append(cssp)
+
+                # If pages have differing orders, emit an ambiguity warning
+                chains = {tuple(pdata.get('css_chain', [])) for pdata in pages.values()}
+                if len(chains) > 1:
+                    results['warnings'].append({
+                        'type': 'ambiguous-load-order',
+                        'selector': '*',
+                        'property': '*',
+                        'from': '-',
+                        'to': '-',
+                        'reason': 'Multiple pages have different CSS load orders; consider --per-page-merge for accuracy',
+                        'page': None
+                    })
+
+            def sort_key_global(loc: Dict[str, Any]) -> Tuple[int, int]:
+                if not pages:
+                    return (0, loc.get('line') or 0)
+                file_index = global_order.index(loc['file']) if loc['file'] in global_order else 10**9
+                return (file_index, loc.get('line') or 0)
+
             for selector, locations in results['selectors'].items():
-                merged_props = {}  # name -> {'value': str, 'priority': str}
-                
-                # Process each rule in order
-                for location in locations:
-                    if 'rule' in location:
-                        for prop in location['rule'].style:
-                            name = prop.name
-                            value = prop.value
-                            priority = prop.priority
-                            
-                            if name not in merged_props:
-                                merged_props[name] = {'value': value, 'priority': priority}
-                            else:
-                                existing_priority = merged_props[name]['priority']
-                                if priority == 'important' and existing_priority != 'important':
-                                    merged_props[name] = {'value': value, 'priority': priority}
-                                elif priority == existing_priority:
-                                    # Same priority, later wins
-                                    merged_props[name] = {'value': value, 'priority': priority}
-                                # If existing is important and new is not, keep existing
-                
-                # Create the merged style
-                merged_style = cssutils.css.CSSStyleDeclaration()
-                for name, data in merged_props.items():
-                    merged_style.setProperty(name, data['value'], data['priority'])
-                
-                # Format the merged CSS with proper indentation
-                properties = []
-                for prop in merged_style:
-                    important = ' !important' if prop.priority == 'important' else ''
-                    properties.append(f"    {prop.name}: {prop.value}{important};")
-                merged_css = f"{selector} {{\n" + "\n".join(properties) + "\n}"
-                results['merged'][selector] = merged_css
+                locs = [l for l in locations if 'rule' in l and (not pages or l['file'] in referenced_css)]
+                if pages:
+                    locs = sorted(locs, key=sort_key_global)
+                # Merge and collect warnings
+                merged_props, warn = merge_locations(selector, locs)
+                if warn:
+                    results['warnings'].extend(warn)
+                results['merged'][selector] = format_merged_block(selector, merged_props)
+
+            # Per-page merge
+            if per_page_merge and pages:
+                results['merged_per_page'] = {}
+                for page_path, pdata in pages.items():
+                    order = pdata.get('css_chain', [])
+                    merged_for_page: Dict[str, str] = {}
+                    for selector, locations in results['selectors'].items():
+                        ordered_locs = sorted([l for l in locations if 'rule' in l], key=lambda l: sort_key_for_page(order, l))
+                        # Keep only those files that actually appear in this page
+                        ordered_locs = [l for l in ordered_locs if l['file'] in set(order)]
+                        if not ordered_locs:
+                            continue
+                        merged_props, warn = merge_locations(selector, ordered_locs, page=page_path)
+                        if warn:
+                            results['warnings'].extend(warn)
+                        merged_for_page[selector] = format_merged_block(selector, merged_props)
+                    results['merged_per_page'][page_path] = merged_for_page
+
+            # If pages known and some CSS appear as uncertain/dynamic, emit a general warning
+            if pages:
+                for page_path, pdata in pages.items():
+                    uncertain = pdata.get('uncertain_css') or []
+                    if uncertain:
+                        results['warnings'].append({
+                            'type': 'dynamic-css',
+                            'selector': '*',
+                            'property': '*',
+                            'from': '-',
+                            'to': '-',
+                            'reason': f"Page has dynamically injected CSS with uncertain load order: {len(uncertain)} file(s)",
+                            'page': page_path
+                        })
                 
         results['errors'] = self.errors
         
@@ -219,7 +386,7 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
                         if match not in self.excluded_selectors:
                             selector = f".{match}"
                             selectors[selector].append({
-                                'file': str(css_file),
+                                'file': str(Path(css_file).resolve()),
                                 'line': line
                             })
                     
@@ -229,7 +396,7 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
                         if match not in self.excluded_selectors:
                             selector = f"#{match}"
                             selectors[selector].append({
-                                'file': str(css_file),
+                                'file': str(Path(css_file).resolve()),
                                 'line': line
                             })
                 
@@ -246,7 +413,7 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
                                 if match not in self.excluded_selectors:
                                     selector = f".{match}"
                                     selectors[selector].append({
-                                        'file': str(css_file),
+                                        'file': str(Path(css_file).resolve()),
                                         'line': line
                                     })
                             
@@ -256,7 +423,7 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
                                 if match not in self.excluded_selectors:
                                     selector = f"#{match}"
                                     selectors[selector].append({
-                                        'file': str(css_file),
+                                        'file': str(Path(css_file).resolve()),
                                         'line': line
                                     })
         
@@ -291,17 +458,18 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
     
     def _find_class_usage(self, content: str, class_name: str) -> bool:
         """Check if a class is used in the content."""
-        # Look for class="..." containing the class name
-        pattern = rf'class\s*=\s*["\'][^"\']*?\b{re.escape(class_name)}\b'
-        return bool(re.search(pattern, content))
+        # Look for class attribute containing the class name (case-insensitive)
+        # This is a simple heuristic that searches within a tag's attributes.
+        pattern = rf'\bclass\b[^>]*\b{re.escape(class_name)}\b'
+        return bool(re.search(pattern, content, flags=re.IGNORECASE))
     
     def _find_id_usage(self, content: str, id_name: str) -> bool:
         """Check if an ID is used in the content."""
-        # Look for id="..." containing the ID name
-        pattern = rf'id\s*=\s*["\'][^"\']*?\b{re.escape(id_name)}\b'
-        return bool(re.search(pattern, content))
+        # Look for id attribute containing the id name (case-insensitive)
+        pattern = rf'\bid\b[^>]*\b{re.escape(id_name)}\b'
+        return bool(re.search(pattern, content, flags=re.IGNORECASE))
     
-    def analyze(self, css_files: List[Path], source_files: List[Path]) -> Dict[str, Any]:
+    def analyze(self, css_files: List[Path], source_files: List[Path], page_map: Dict[str, Any] = None, per_page_unused: bool = False) -> Dict[str, Any]:
         """Analyze for unused CSS selectors."""
         results = {
             'unused_selectors': {},
@@ -310,6 +478,16 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
             'usage_percentage': 0,
             'errors': []
         }
+        if page_map:
+            # Accept either full parse_html_for_css result or just pages dict
+            if 'pages' in page_map:
+                pages = page_map.get('pages', {})
+                results['unused_files'] = page_map.get('unreferenced_css', [])
+            else:
+                pages = page_map
+                results['unused_files'] = []
+        else:
+            pages = None
         
         # Extract all CSS selectors with locations
         css_selectors = self._extract_css_selectors(css_files)
@@ -318,17 +496,34 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
         if not css_selectors:
             return results
         
-        # Find used selectors
-        used_selectors = self._find_used_selectors(source_files, set(css_selectors.keys()))
-        results['used_selectors'] = used_selectors
+        # Map selector -> set(files where defined)
+        selector_def_files: Dict[str, Set[str]] = {sel: set(loc['file'] for loc in locs) for sel, locs in css_selectors.items()}
+
+        # Find used selectors (site-wide)
+        used_sitewide = self._find_used_selectors(source_files, set(css_selectors.keys()))
+
+        # If pages are known, restrict usage to pages that actually include a CSS file where the selector is defined
+        if pages:
+            used_page_scoped: Set[str] = set()
+            # Build page -> set(css files included)
+            page_css_map: Dict[str, Set[str]] = {pg: set(info.get('css_chain', [])) for pg, info in pages.items()}
+            for sel in used_sitewide:
+                def_files = selector_def_files.get(sel, set())
+                # If any page both uses selector and includes any defining CSS file, count as used
+                # We don't have per-page usage content, so keep sitewide used but only if any page includes
+                if any(def_files & page_css_map.get(pg, set()) for pg in page_css_map.keys()):
+                    used_page_scoped.add(sel)
+            results['used_selectors'] = used_page_scoped
+        else:
+            results['used_selectors'] = used_sitewide
         
         # Calculate unused selectors with locations
-        unused_selectors = {k: v for k, v in css_selectors.items() if k not in used_selectors}
+        unused_selectors = {k: v for k, v in css_selectors.items() if k not in results['used_selectors']}
         results['unused_selectors'] = unused_selectors
         
         # Calculate usage percentage
         if css_selectors:
-            results['usage_percentage'] = (len(used_selectors) / len(css_selectors)) * 100
+            results['usage_percentage'] = (len(results['used_selectors']) / len(css_selectors)) * 100
         
         results['errors'] = self.errors
         

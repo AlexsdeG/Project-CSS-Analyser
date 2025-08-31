@@ -72,12 +72,55 @@ class ConsoleReporter:
         else:
             self.console.print("[green]✓ No duplicate comments found.[/green]")
         
+        # Load order per page
+        if results.get('load_order'):
+            self.console.print("\n[bold blue]Load Order (per page):[/bold blue]")
+            for page, chain in results['load_order'].items():
+                table = Table(title=str(page))
+                table.add_column("Index", justify="right")
+                table.add_column("CSS File", overflow="fold")
+                for idx, item in enumerate(chain[:20]):  # show top N
+                    table.add_row(str(idx + 1), item)
+                if len(chain) > 20:
+                    table.add_row("…", f"(+{len(chain)-20} more)")
+                self.console.print(table)
+
+        # Conflicts
+        if results.get('warnings'):
+            self.console.print("\n[bold yellow]Conflicts & Overrides:[/bold yellow]")
+            warn_table = Table(title="Conflicts & Overrides")
+            warn_table.add_column("Selector", style="cyan")
+            warn_table.add_column("Property", style="magenta")
+            warn_table.add_column("Page", style="green")
+            warn_table.add_column("From", style="yellow")
+            warn_table.add_column("To", style="yellow")
+            warn_table.add_column("Reason", style="white")
+            for w in results['warnings']:
+                warn_table.add_row(
+                    w.get('selector', ''),
+                    w.get('property', ''),
+                    str(w.get('page', '—')),
+                    w.get('from', ''),
+                    w.get('to', ''),
+                    w.get('reason', w.get('type', ''))
+                )
+            self.console.print(warn_table)
+
         # Report merged CSS if available
         if merge and 'merged' in results and results['merged']:
             self.console.print("\n[bold green]Merged CSS Rules:[/bold green]")
             for selector, merged_css in results['merged'].items():
                 self.console.print(f"[cyan]{merged_css}[/cyan]")
                 self.console.print()
+
+        # Per-page merged CSS
+        if merge and 'merged_per_page' in results and results['merged_per_page']:
+            self.console.print("\n[bold green]Merged CSS Rules (Per Page):[/bold green]")
+            for page, selmap in results['merged_per_page'].items():
+                self.console.print(f"[bold]{page}[/bold]")
+                for selector, merged_css in selmap.items():
+                    self.console.print(f"[cyan]{merged_css}[/cyan]")
+                    self.console.print()
         
         # Report errors
         if results['errors']:
@@ -106,6 +149,15 @@ class ConsoleReporter:
         
         self.console.print(summary_table)
         
+        # Unused CSS files
+        if results.get('unused_files'):
+            self.console.print("\n[bold yellow]Unused CSS Files:[/bold yellow]")
+            file_table = Table()
+            file_table.add_column("File", style="cyan")
+            for f in results['unused_files']:
+                file_table.add_row(f)
+            self.console.print(file_table)
+
         # Unused selectors
         if results['unused_selectors']:
             self.console.print(f"\n[bold red]Unused Selectors ({unused_selectors}):[/bold red]")
@@ -311,9 +363,11 @@ class HTMLReporter:
         """Generate HTML report for a specific analysis type."""
         self._ensure_reports_folder()
         
-        # Prefix output_path with reports/ if it's relative
+        # Prefix output_path with reports/ if it's relative and not already under reports/
         if not output_path.is_absolute():
-            output_path = Path("reports") / output_path
+            op_str = str(output_path).replace('\\', '/').lstrip('./')
+            if not op_str.startswith('reports/'):
+                output_path = Path("reports") / output_path
             
         html_content = self.template.render(
             results=results,
@@ -331,9 +385,11 @@ class HTMLReporter:
         """Generate comprehensive HTML report."""
         self._ensure_reports_folder()
         
-        # Prefix output_path with reports/ if it's relative
+        # Prefix output_path with reports/ if it's relative and not already under reports/
         if not output_path.is_absolute():
-            output_path = Path("reports") / output_path
+            op_str = str(output_path).replace('\\', '/').lstrip('./')
+            if not op_str.startswith('reports/'):
+                output_path = Path("reports") / output_path
             
         html_content = self._get_comprehensive_template().render(
             all_results=all_results,
@@ -446,11 +502,45 @@ class HTMLReporter:
             
             html.append('</table>')
         
+        # Load order section
+        if results.get('load_order'):
+            html.append('<h3>Load Order (per page)</h3>')
+            for page, chain in results['load_order'].items():
+                html.append(f'<h4>{page}</h4>')
+                html.append('<table>')
+                html.append('<tr><th>#</th><th>CSS File</th></tr>')
+                for i, item in enumerate(chain):
+                    html.append(f'<tr><td>{i+1}</td><td>{item}</td></tr>')
+                html.append('</table>')
+
+        # Conflicts & Overrides
+        if results.get('warnings'):
+            html.append('<h3>Conflicts & Overrides</h3>')
+            html.append('<table>')
+            html.append('<tr><th>Selector</th><th>Property</th><th>Page</th><th>From</th><th>To</th><th>Reason</th></tr>')
+            badge_map = {
+                'important-blocks-normal': 'badge badge-danger',
+                'important-vs-important': 'badge badge-warning',
+                'later-overrides-earlier': 'badge badge-info'
+            }
+            for w in results['warnings']:
+                reason = w.get('reason', w.get('type',''))
+                cls = badge_map.get(w.get('type',''), 'badge')
+                html.append(f"<tr><td>{w.get('selector','')}</td><td>{w.get('property','')}</td><td>{w.get('page','')}</td><td>{w.get('from','')}</td><td>{w.get('to','')}</td><td><span class='{cls}'>{reason}</span></td></tr>")
+            html.append('</table>')
+            html.append('<p><small>Legend: <span class="badge badge-danger">important blocks normal</span> <span class="badge badge-warning">important vs important</span> <span class="badge badge-info">later overrides earlier</span></small></p>')
+
         # Merged CSS
         if merge and 'merged' in results and results['merged']:
             html.append('<h3>Merged CSS Rules</h3><br>')
             for selector, merged_css in results['merged'].items():
                 html.append(f'<pre><code>{merged_css}</code></pre><br>')
+        if merge and 'merged_per_page' in results and results['merged_per_page']:
+            html.append('<h3>Merged CSS Rules (Per Page)</h3>')
+            for page, selmap in results['merged_per_page'].items():
+                html.append(f'<h4>{page}</h4>')
+                for selector, merged_css in selmap.items():
+                    html.append(f'<pre><code>{merged_css}</code></pre>')
         
         return ''.join(html)
     
@@ -474,6 +564,15 @@ class HTMLReporter:
         html.append('</table>')
         html.append('</div>')
         
+        # Unused CSS files
+        if results.get('unused_files'):
+            html.append('<h3>Unused CSS Files</h3>')
+            html.append('<table>')
+            html.append('<tr><th>File</th></tr>')
+            for f in results['unused_files']:
+                html.append(f'<tr><td>{f}</td></tr>')
+            html.append('</table>')
+
         # Unused selectors
         if results.get('unused_selectors'):
             html.append('<h3>Unused Selectors</h3>')

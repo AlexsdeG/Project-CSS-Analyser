@@ -4,8 +4,9 @@ Utility functions for CSS Analyzer.
 
 import os
 from pathlib import Path
-from typing import List, Set
+from typing import List, Set, Dict, Any, Tuple
 import fnmatch
+import re
 
 # Default directories to exclude from analysis
 DEFAULT_EXCLUDE_DIRS = {
@@ -31,6 +32,9 @@ DEFAULT_EXCLUDE_DIRS = {
 # Default file extensions to include
 DEFAULT_CSS_EXTENSIONS = {'.css', '.scss', '.sass', '.less'}
 DEFAULT_SOURCE_EXTENSIONS = {'.html', '.htm', '.php', '.js', '.jsx', '.ts', '.tsx', '.vue'}
+
+# Subset used for page parsing (entry documents)
+PAGE_EXTENSIONS = {'.html', '.htm', '.php'}
 
 def get_css_files(path: Path, exclude_dirs: Set[str] = None) -> List[Path]:
     """
@@ -93,6 +97,166 @@ def get_source_files(path: Path, exclude_dirs: Set[str] = None) -> List[Path]:
                     source_files.append(file_path)
     
     return sorted(source_files)
+
+def _iter_files(path: Path, include_exts: Set[str], exclude_dirs: Set[str]) -> List[Path]:
+    """Internal helper to iterate files by extensions under a path."""
+    files: List[Path] = []
+    if path.is_file():
+        if path.suffix.lower() in include_exts:
+            files.append(path)
+    elif path.is_dir():
+        for root, dirs, filenames in os.walk(path):
+            dirs[:] = [d for d in dirs if d not in exclude_dirs]
+            for name in filenames:
+                p = Path(root) / name
+                if p.suffix.lower() in include_exts:
+                    files.append(p)
+    return sorted(files)
+
+def _resolve_path(base: Path, href: str) -> Path:
+    """Resolve a possibly relative href against a base file path."""
+    # Ignore external URLs
+    if re.match(r'^(https?:)?//', href) or href.startswith('data:'):
+        return None
+    # Remove query/hash parts
+    href_clean = re.split(r'[?#]', href)[0]
+    resolved = (base.parent / href_clean).resolve()
+    return resolved
+
+def resolve_css_imports(entry_css: Path) -> List[Path]:
+    """
+    Resolve @import chains for a given CSS file.
+
+    Depth-first traversal, returns a flattened ordered list where imported
+    stylesheets appear before the importing stylesheet. Cycles are prevented.
+    """
+    visited: Set[Path] = set()
+    ordered: List[Path] = []
+
+    import_pattern = re.compile(r"@import\s+(?:url\(\s*)?[\'\"]?([^\'\"\)]+)")
+
+    def dfs(css_path: Path):
+        css_path = css_path.resolve()
+        if css_path in visited or not css_path.exists():
+            return
+        visited.add(css_path)
+        try:
+            content = read_file_content(css_path)
+        except Exception:
+            content = ''
+
+        for match in import_pattern.finditer(content):
+            href = match.group(1).strip()
+            child = _resolve_path(css_path, href)
+            if child and child.suffix.lower() in DEFAULT_CSS_EXTENSIONS:
+                if child in visited:
+                    # cycle detected; skip further descent
+                    continue
+                dfs(child)
+        ordered.append(css_path)
+
+    dfs(entry_css)
+    return ordered
+
+def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, Any]:
+    """
+    Scan HTML/PHP pages to determine concrete CSS load order per page.
+
+    Returns a dict with keys:
+      - pages: { page_path: { 'css_chain': [css paths...], 'uncertain_css': [paths...] } }
+      - all_css: set([...])
+      - unreferenced_css: set([...])
+    """
+    if exclude_dirs is None:
+        exclude_dirs = DEFAULT_EXCLUDE_DIRS
+
+    pages: Dict[str, Dict[str, Any]] = {}
+    all_css: Set[str] = set()
+    uncertain_css: Dict[str, Set[str]] = {}
+
+    page_files = _iter_files(path, PAGE_EXTENSIONS, exclude_dirs)
+
+    # Patterns
+    link_pattern = re.compile(r"<link[^>]+rel=[\"\']stylesheet[\"\'][^>]*href=[\"\']([^\"\']+)[\"\']", re.IGNORECASE)
+    style_import_pattern = re.compile(r"@import\s+(?:url\(\s*)?[\'\"]?([^\'\"\)]+)", re.IGNORECASE)
+    script_src_pattern = re.compile(r"<script[^>]*src=[\"\']([^\"\']+)[\"\']", re.IGNORECASE)
+
+    js_dynamic_link_patterns = [
+        re.compile(r"createElement\(\s*['\"]link['\"]\s*\)", re.IGNORECASE),
+        re.compile(r"\.setAttribute\(\s*['\"]rel['\"],\s*['\"]stylesheet['\"]\s*\)", re.IGNORECASE),
+        re.compile(r"\.href\s*=\s*['\"]([^'\"]+)['\"]", re.IGNORECASE),
+    ]
+
+    # Collect JS files referenced by pages (to narrow dynamic detection scope)
+    js_files_for_pages: Dict[Path, List[Path]] = {}
+
+    for page in page_files:
+        content = read_file_content(page)
+        # Ordered <link> tags
+        hrefs = link_pattern.findall(content)
+        css_chain: List[str] = []
+
+        for href in hrefs:
+            p = _resolve_path(page, href)
+            if p and p.suffix.lower() in DEFAULT_CSS_EXTENSIONS:
+                # Resolve imports for this stylesheet
+                flattened = resolve_css_imports(p)
+                for f in flattened:
+                    css_chain.append(str(f.resolve()))
+                    all_css.add(str(f.resolve()))
+
+        # Inline <style> @import
+        for import_href in style_import_pattern.findall(content):
+            p = _resolve_path(page, import_href)
+            if p and p.suffix.lower() in DEFAULT_CSS_EXTENSIONS:
+                flattened = resolve_css_imports(p)
+                for f in flattened:
+                    css_chain.append(str(f.resolve()))
+                    all_css.add(str(f.resolve()))
+
+        # JS included scripts for this page
+        js_srcs = script_src_pattern.findall(content)
+        page_js: List[Path] = []
+        for js in js_srcs:
+            jp = _resolve_path(page, js)
+            if jp and jp.suffix.lower() in {'.js', '.mjs'} and jp.exists():
+                page_js.append(jp)
+        js_files_for_pages[page] = page_js
+
+        pages[str(page)] = {
+            'css_chain': css_chain,
+            'uncertain_css': []  # fill later
+        }
+
+    # Very naive dynamic detection inside JS: look for href assignments or link creation
+    for page, js_paths in js_files_for_pages.items():
+        uncertain: Set[str] = set()
+        for jp in js_paths:
+            js_content = read_file_content(jp)
+            if not js_content:
+                continue
+            # If code mentions link creation and sets href, mark as uncertain
+            if any(patt.search(js_content) for patt in js_dynamic_link_patterns):
+                # Try to extract explicit href values
+                for m in js_dynamic_link_patterns[2].finditer(js_content):
+                    href = m.group(1)
+                    p = _resolve_path(jp, href)
+                    if p and p.suffix.lower() in DEFAULT_CSS_EXTENSIONS:
+                        uncertain.add(str(p.resolve()))
+        if str(page) in pages:
+            pages[str(page)]['uncertain_css'] = sorted(uncertain)
+            for u in uncertain:
+                all_css.add(u)
+
+    # Determine unreferenced CSS: all CSS on filesystem under path minus discovered
+    all_fs_css = set(str(p.resolve()) for p in _iter_files(path, DEFAULT_CSS_EXTENSIONS, exclude_dirs))
+    unreferenced_css = sorted(all_fs_css - set(all_css))
+
+    return {
+        'pages': pages,
+        'all_css': sorted(set(all_css)),
+        'unreferenced_css': unreferenced_css
+    }
 
 def get_file_size(file_path: Path) -> int:
     """Get file size in bytes."""

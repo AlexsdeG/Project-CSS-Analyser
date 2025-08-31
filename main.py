@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from analyzers import DuplicateAnalyzer, UnusedSelectorAnalyzer, StructureAnalyzer
 from reporters import ConsoleReporter, HTMLReporter
-from utils import get_css_files, get_source_files
+from utils import get_css_files, get_source_files, parse_html_for_css
 
 console = Console()
 
@@ -36,8 +36,10 @@ def cli():
 @click.option('--output-html', type=click.Path(path_type=Path), 
               help='Generate an HTML report at the specified path.')
 @click.option('--merge', is_flag=True, help='Generate merged CSS rules for duplicate selectors.')
+@click.option('--per-page-merge', is_flag=True, help='Produce merged CSS per page based on load order.')
+@click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def duplicates(path, output_html, merge, verbose):
+def duplicates(path, output_html, merge, per_page_merge, page_root, verbose):
     """Find duplicate selectors, @media rules, and comments."""
     if verbose:
         console.print(f"[yellow]Analyzing duplicates in: {path}[/yellow]")
@@ -51,9 +53,17 @@ def duplicates(path, output_html, merge, verbose):
     if verbose:
         console.print(f"[green]Found {len(css_files)} CSS files to analyze[/green]")
     
+    # Page mapping if merging is requested
+    page_info = None
+    if merge or per_page_merge:
+        root = page_root or path
+        if verbose:
+            console.print(f"[yellow]Building page load order from: {root}[/yellow]")
+        page_info = parse_html_for_css(root)
+
     # Perform analysis
     analyzer = DuplicateAnalyzer()
-    results = analyzer.analyze(css_files, merge=merge)
+    results = analyzer.analyze(css_files, merge=merge, page_map=page_info, per_page_merge=per_page_merge)
     
     # Report results
     console_reporter = ConsoleReporter()
@@ -68,8 +78,9 @@ def duplicates(path, output_html, merge, verbose):
 @click.argument('path', type=click.Path(exists=True, path_type=Path))
 @click.option('--output-html', type=click.Path(path_type=Path), 
               help='Generate an HTML report at the specified path.')
+@click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def unused(path, output_html, verbose):
+def unused(path, output_html, page_root, verbose):
     """Find unused CSS selectors by scanning HTML, PHP, and JS files."""
     if verbose:
         console.print(f"[yellow]Analyzing unused selectors in: {path}[/yellow]")
@@ -88,9 +99,12 @@ def unused(path, output_html, verbose):
     if verbose:
         console.print(f"[green]Found {len(css_files)} CSS files and {len(source_files)} source files[/green]")
     
+    # Page mapping
+    page_info = parse_html_for_css(page_root or path)
+
     # Perform analysis
     analyzer = UnusedSelectorAnalyzer()
-    results = analyzer.analyze(css_files, source_files)
+    results = analyzer.analyze(css_files, source_files, page_map=page_info)
     
     # Report results
     console_reporter = ConsoleReporter()
@@ -137,8 +151,9 @@ def structure(path, output_html, verbose):
 @click.argument('path', type=click.Path(exists=True, path_type=Path))
 @click.option('--output-html', type=click.Path(path_type=Path), 
               help='Generate an HTML report at the specified path.')
+@click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def analyze(path, output_html, verbose):
+def analyze(path, output_html, page_root, verbose):
     """Run all analyses (duplicates, unused, structure)."""
     if verbose:
         console.print(f"[yellow]Running comprehensive analysis on: {path}[/yellow]")
@@ -154,18 +169,21 @@ def analyze(path, output_html, verbose):
     if verbose:
         console.print(f"[green]Found {len(css_files)} CSS files and {len(source_files)} source files[/green]")
     
+    # Build page mapping once
+    page_info = parse_html_for_css(page_root or path)
+
     # Perform all analyses
     all_results = {}
     
     # Duplicates analysis
     console.print("[cyan]Analyzing duplicates...[/cyan]")
     duplicate_analyzer = DuplicateAnalyzer()
-    all_results['duplicates'] = duplicate_analyzer.analyze(css_files)
+    all_results['duplicates'] = duplicate_analyzer.analyze(css_files, merge=False, page_map=page_info)
     
     # Unused selectors analysis
     console.print("[cyan]Analyzing unused selectors...[/cyan]")
     unused_analyzer = UnusedSelectorAnalyzer()
-    all_results['unused'] = unused_analyzer.analyze(css_files, source_files)
+    all_results['unused'] = unused_analyzer.analyze(css_files, source_files, page_map=page_info)
     
     # Structure analysis
     console.print("[cyan]Analyzing structure...[/cyan]")

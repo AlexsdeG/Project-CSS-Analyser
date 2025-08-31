@@ -30,6 +30,12 @@ python -m main duplicates ./sample_project/
 
 # Generate HTML report
 python -m main duplicates ./sample_project/ --output-html duplicates_report.html
+
+# Merge duplicates honoring load order (global)
+python -m main duplicates ./sample_project/ --merge --page-root ./sample_project/
+
+# Merge per page (when load order differs across pages)
+python -m main duplicates ./sample_project/ --merge --per-page-merge --page-root ./sample_project/
 ```
 
 #### 2. Find Unused Selectors
@@ -41,6 +47,9 @@ python -m main unused ./sample_project/
 
 # Generate HTML report
 python -m main unused ./sample_project/ --output-html unused_report.html
+
+# Page-aware unused detection and unused CSS files
+python -m main unused ./sample_project/ --page-root ./sample_project/
 ```
 
 #### 3. Analyze Structure
