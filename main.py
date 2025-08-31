@@ -38,8 +38,9 @@ def cli():
 @click.option('--merge', is_flag=True, help='Generate merged CSS rules for duplicate selectors.')
 @click.option('--per-page-merge', is_flag=True, help='Produce merged CSS per page based on load order.')
 @click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
+@click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def duplicates(path, output_html, merge, per_page_merge, page_root, verbose):
+def duplicates(path, output_html, merge, per_page_merge, page_root, full, verbose):
     """Find duplicate selectors, @media rules, and comments."""
     if verbose:
         console.print(f"[yellow]Analyzing duplicates in: {path}[/yellow]")
@@ -66,11 +67,11 @@ def duplicates(path, output_html, merge, per_page_merge, page_root, verbose):
     results = analyzer.analyze(css_files, merge=merge, page_map=page_info, per_page_merge=per_page_merge)
     
     # Report results
-    console_reporter = ConsoleReporter()
+    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full)
     console_reporter.report_duplicates(results, merge=merge)
     
     if output_html:
-        html_reporter = HTMLReporter()
+        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full)
         html_reporter.generate_report(results, output_html, analysis_type='duplicates', merge=merge)
         console.print(f"[green]HTML report generated: {output_html}[/green]")
 
@@ -79,8 +80,9 @@ def duplicates(path, output_html, merge, per_page_merge, page_root, verbose):
 @click.option('--output-html', type=click.Path(path_type=Path), 
               help='Generate an HTML report at the specified path.')
 @click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
+@click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def unused(path, output_html, page_root, verbose):
+def unused(path, output_html, page_root, full, verbose):
     """Find unused CSS selectors by scanning HTML, PHP, and JS files."""
     if verbose:
         console.print(f"[yellow]Analyzing unused selectors in: {path}[/yellow]")
@@ -107,11 +109,11 @@ def unused(path, output_html, page_root, verbose):
     results = analyzer.analyze(css_files, source_files, page_map=page_info)
     
     # Report results
-    console_reporter = ConsoleReporter()
+    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full)
     console_reporter.report_unused_selectors(results)
     
     if output_html:
-        html_reporter = HTMLReporter()
+        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full)
         html_reporter.generate_report(results, output_html, analysis_type='unused')
         console.print(f"[green]HTML report generated: {output_html}[/green]")
 
@@ -119,8 +121,11 @@ def unused(path, output_html, page_root, verbose):
 @click.argument('path', type=click.Path(exists=True, path_type=Path))
 @click.option('--output-html', type=click.Path(path_type=Path), 
               help='Generate an HTML report at the specified path.')
+@click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
+@click.option('--skip', is_flag=True, help='Only include CSS files referenced by pages (requires --page-root or defaults to PATH).')
+@click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def structure(path, output_html, verbose):
+def structure(path, output_html, page_root, skip, full, verbose):
     """Analyze CSS structure for prefixes, comments, and patterns."""
     if verbose:
         console.print(f"[yellow]Analyzing CSS structure in: {path}[/yellow]")
@@ -134,16 +139,25 @@ def structure(path, output_html, verbose):
     if verbose:
         console.print(f"[green]Found {len(css_files)} CSS files to analyze[/green]")
     
+    # Build page map if requested or needed for skip
+    page_info = None
+    if page_root or skip:
+        root = page_root or path
+        if verbose:
+            console.print(f"[yellow]Building page load order from: {root}[/yellow]")
+        page_info = parse_html_for_css(root)
+
     # Perform analysis
     analyzer = StructureAnalyzer()
-    results = analyzer.analyze(css_files)
+    pages = page_info['pages'] if page_info else None
+    results = analyzer.analyze(css_files, page_map=pages, skip_unreferenced=skip)
     
     # Report results
-    console_reporter = ConsoleReporter()
+    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full)
     console_reporter.report_structure(results)
     
     if output_html:
-        html_reporter = HTMLReporter()
+        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full)
         html_reporter.generate_report(results, output_html, analysis_type='structure')
         console.print(f"[green]HTML report generated: {output_html}[/green]")
 
@@ -152,8 +166,9 @@ def structure(path, output_html, verbose):
 @click.option('--output-html', type=click.Path(path_type=Path), 
               help='Generate an HTML report at the specified path.')
 @click.option('--page-root', type=click.Path(path_type=Path), help='Root directory where HTML/PHP pages live (defaults to PATH).')
+@click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def analyze(path, output_html, page_root, verbose):
+def analyze(path, output_html, page_root, full, verbose):
     """Run all analyses (duplicates, unused, structure)."""
     if verbose:
         console.print(f"[yellow]Running comprehensive analysis on: {path}[/yellow]")
@@ -188,14 +203,14 @@ def analyze(path, output_html, page_root, verbose):
     # Structure analysis
     console.print("[cyan]Analyzing structure...[/cyan]")
     structure_analyzer = StructureAnalyzer()
-    all_results['structure'] = structure_analyzer.analyze(css_files)
+    all_results['structure'] = structure_analyzer.analyze(css_files, page_map=page_info.get('pages') if page_info else None)
     
     # Report results
-    console_reporter = ConsoleReporter()
+    console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full)
     console_reporter.report_comprehensive(all_results)
     
     if output_html:
-        html_reporter = HTMLReporter()
+        html_reporter = HTMLReporter(project_root=Path(path).resolve(), full=full)
         html_reporter.generate_comprehensive_report(all_results, output_html)
         console.print(f"[green]Comprehensive HTML report generated: {output_html}[/green]")
 

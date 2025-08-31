@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Set, Dict, Any, Tuple
 import fnmatch
 import re
+from urllib.parse import quote
 
 # Default directories to exclude from analysis
 DEFAULT_EXCLUDE_DIRS = {
@@ -35,6 +36,47 @@ DEFAULT_SOURCE_EXTENSIONS = {'.html', '.htm', '.php', '.js', '.jsx', '.ts', '.ts
 
 # Subset used for page parsing (entry documents)
 PAGE_EXTENSIONS = {'.html', '.htm', '.php'}
+
+# Default table cap used by reporters when --full is not specified
+DEFAULT_TABLE_CAP = 10
+
+# -------------------------------
+# Path normalization and link helpers
+# -------------------------------
+
+def to_abs(p: Path) -> Path:
+    return p.resolve()
+
+def make_file_href(p: Path) -> str:
+    """Build a file:/// URL (URL-encoded) for a filesystem path."""
+    p = to_abs(p)
+    # Use POSIX style for URLs and percent-encode
+    return "file:///" + quote(p.as_posix())
+
+def make_rel_label(p: Path, project_root: Path) -> str:
+    """Return a label like "\\sample_project\\style.css" relative to project_root.
+
+    If the path is outside the project root, returns "\\filename.ext".
+    Always uses backslashes in the label per requirement.
+    """
+    p = to_abs(p)
+    root = to_abs(project_root) if project_root else p.parent
+    try:
+        rel = p.relative_to(root)
+    except ValueError:
+        # If outside root, just show the file name
+        return f"\\{p.name}"
+    # Backslash separators in label, ensure no duplicate backslashes
+    label = "\\" + str(rel).replace("/", "\\").replace("\\\\", "\\")
+    return label
+
+def make_console_link_text(label: str, href: str):
+    """Return tuple (text, style) usable by rich for hyperlinks in console."""
+    return (label, f"link {href} bold yellow")
+
+def make_html_link(label: str, href: str) -> str:
+    """Return a yellow-styled anchor tag for HTML reports."""
+    return f'<a href="{href}" target="_blank" class="file-link">{label}</a>'
 
 def get_css_files(path: Path, exclude_dirs: Set[str] = None) -> List[Path]:
     """

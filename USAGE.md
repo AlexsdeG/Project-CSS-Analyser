@@ -61,6 +61,9 @@ python -m main structure ./sample_project/
 
 # Generate HTML report
 python -m main structure ./sample_project/ --output-html structure_report.html
+
+# Display all Rows in Tables in CLI and HTML Report
+python -m main structure ./sample_project/ --output-html structure_report.html --full
 ```
 
 #### 4. Comprehensive Analysis

@@ -536,8 +536,33 @@ class StructureAnalyzer(BaseAnalyzer):
         super().__init__()
         self.prefix_pattern = re.compile(r'\.([a-zA-Z0-9_-]+)-')
     
-    def analyze(self, css_files: List[Path]) -> Dict[str, Any]:
-        """Analyze CSS structure for prefixes, comments, and patterns."""
+    def analyze(self, css_files: List[Path], page_map: Dict[str, Any] = None, skip_unreferenced: bool = False) -> Dict[str, Any]:
+        """Analyze CSS structure for prefixes, comments, and patterns.
+
+        If page_map is provided and skip_unreferenced is True, only analyze CSS files
+        referenced by any page's css_chain. When page_map is provided, include a
+        'load_order' section mirroring per-page CSS chains for consistency.
+        """
+        # Normalize pages mapping if provided
+        pages = None
+        if page_map:
+            if isinstance(page_map, dict) and 'pages' in page_map:
+                pages = page_map.get('pages') or {}
+            else:
+                pages = page_map
+
+        # Optionally filter css_files to only those referenced by pages
+        if pages and skip_unreferenced:
+            referenced: Set[str] = set()
+            for _, info in pages.items():
+                for p in info.get('css_chain', []) or []:
+                    referenced.add(str(Path(p).resolve()))
+            css_files = [Path(p).resolve() for p in css_files if str(Path(p).resolve()) in referenced]
+
+        # Ensure paths are Path objects
+        css_files = [Path(p).resolve() for p in css_files]
+
+        # Analyze
         results = {
             'comments': [],
             'prefixes': defaultdict(int),
@@ -579,12 +604,17 @@ class StructureAnalyzer(BaseAnalyzer):
                     line = self._get_line_number(css_content, rule.cssText, str(css_file))
                     comment_info = {
                         'text': rule.cssText,
-                        'file': str(css_file),
+                        'file': str(Path(css_file).resolve()),
                         'line': line
                     }
                     results['comments'].append(comment_info)
                     results['total_comments'] += 1
         
+        # Attach load order (per page) and analyzed files for reporter context
+        if pages:
+            results['load_order'] = {page: info.get('css_chain', []) for page, info in pages.items()}
+        results['analyzed_files'] = [str(Path(p).resolve()) for p in css_files]
+
         results['errors'] = self.errors
         return results
     

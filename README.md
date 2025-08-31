@@ -126,6 +126,7 @@ All commands support the following options:
 - `--per-page-merge`: Also produce merged CSS per page using each page's concrete load order
 - `--page-root PATH`: Directory where HTML/PHP pages live (used to compute CSS load order and unused CSS files). Defaults to the provided PATH.
 - `--output-html PATH`: Generate an HTML report at the specified path
+- `--full`: Display all Tables with full rows (Default: 10 Rows)
 - `--verbose, -v`: Enable verbose output for debugging
 
 ## File Support
