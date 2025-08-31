@@ -16,14 +16,13 @@ with open('requirements.txt') as f:
     requirements = [line.strip() for line in f if line.strip() and not line.startswith('#')]
 
 setup(
-    name="css-analyzer",
-    version="1.0.0",
-    author="CSS Analyzer Team",
-    author_email="your-email@example.com",
+    name="Project-CSS-Analyser",
+    version="1.3.1",
+    author="AlexsdeG",
     description="A comprehensive CLI tool for analyzing CSS and web project files",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/your-username/css-analyzer",
+    url="https://github.com/AlexsdeG/Project-CSS-Analyser",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -54,7 +53,7 @@ setup(
     },
     keywords="css analyzer web development duplicate selectors unused",
     project_urls={
-        "Bug Reports": "https://github.com/your-username/css-analyzer/issues",
-        "Source": "https://github.com/your-username/css-analyzer",
+        "Bug Reports": "https://github.com/AlexsdeG/Project-CSS-Analyser/issues",
+        "Source": "https://github.com/AlexsdeG/Project-CSS-Analyser",
     },
 )

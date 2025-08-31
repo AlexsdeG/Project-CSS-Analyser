@@ -72,7 +72,7 @@ class BaseAnalyzer:
 class DuplicateAnalyzer(BaseAnalyzer):
     """Analyzer for finding duplicate CSS selectors, media queries, and comments."""
     
-    def analyze(self, css_files: List[Path], merge: bool = False, page_map: Dict[str, Any] = None, per_page_merge: bool = False) -> Dict[str, Any]:
+    def analyze(self, css_files: List[Path], merge: bool = False, page_map: Dict[str, Any] = None, per_page_merge: bool = False, skip_unreferenced: bool = False) -> Dict[str, Any]:
         """Analyze CSS files for duplicates.
 
         Args:
@@ -105,6 +105,14 @@ class DuplicateAnalyzer(BaseAnalyzer):
         results['load_order'] = {k: v.get('css_chain', []) for k, v in (pages or {}).items()}
         if unreferenced_css:
             results['unreferenced_css'] = list(unreferenced_css)
+        
+        # Optionally filter css_files to only those referenced by pages
+        if pages and skip_unreferenced:
+            referenced: Set[str] = set()
+            for _, info in pages.items():
+                for p in info.get('css_chain', []) or []:
+                    referenced.add(str(Path(p).resolve()))
+            css_files = [Path(p).resolve() for p in css_files if str(Path(p).resolve()) in referenced]
         
         for css_file in css_files:
             stylesheet, css_content = self._parse_css_file(css_file)
@@ -469,7 +477,7 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
         pattern = rf'\bid\b[^>]*\b{re.escape(id_name)}\b'
         return bool(re.search(pattern, content, flags=re.IGNORECASE))
     
-    def analyze(self, css_files: List[Path], source_files: List[Path], page_map: Dict[str, Any] = None, per_page_unused: bool = False) -> Dict[str, Any]:
+    def analyze(self, css_files: List[Path], source_files: List[Path], page_map: Dict[str, Any] = None, per_page_unused: bool = False, skip_unreferenced: bool = False) -> Dict[str, Any]:
         """Analyze for unused CSS selectors."""
         results = {
             'unused_selectors': {},
@@ -488,6 +496,14 @@ class UnusedSelectorAnalyzer(BaseAnalyzer):
                 results['unused_files'] = []
         else:
             pages = None
+        
+        # Optionally filter css_files to only those referenced by pages
+        if pages and skip_unreferenced:
+            referenced: Set[str] = set()
+            for _, info in pages.items():
+                for p in info.get('css_chain', []) or []:
+                    referenced.add(str(Path(p).resolve()))
+            css_files = [Path(p).resolve() for p in css_files if str(Path(p).resolve()) in referenced]
         
         # Extract all CSS selectors with locations
         css_selectors = self._extract_css_selectors(css_files)

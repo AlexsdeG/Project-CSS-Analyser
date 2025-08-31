@@ -126,10 +126,10 @@ All commands support the following options:
 - `--per-page-merge`: Also produce merged CSS per page using each page's concrete load order
 - `--page-root PATH`: Directory where HTML/PHP pages live (used to compute CSS load order and unused CSS files). Defaults to the provided PATH.
 - `--output-html PATH`: Generate an HTML report at the specified path
-- `--full`: Display all Tables with full rows (Default: 10 Rows)
-- `--skip`: Skips in strucutre analyse unused style sheets
-- `--vscode`: Table links get vscode:/// with line number attached
-- `--verbose, -v`: Enable verbose output for debugging
+- `--skip`: General: Skips the unused style sheets
+- `--full`: General: Display all Tables with full rows (Default: 10 Rows)
+- `--vscode`: General: Table links get vscode:/// with line number attached
+- `--verbose, -v`: General: Enable verbose output for debugging
 
 ## File Support
 
