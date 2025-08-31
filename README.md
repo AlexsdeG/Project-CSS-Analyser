@@ -17,7 +17,7 @@ A comprehensive CLI tool for analyzing CSS and web project files. CSS Analyzer h
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/your-username/css-analyzer.git
+git clone https://github.com/AlexsdeG/Project-CSS-Analyser.git
 cd css-analyzer
 ```
 
@@ -127,6 +127,7 @@ All commands support the following options:
 - `--page-root PATH`: Directory where HTML/PHP pages live (used to compute CSS load order and unused CSS files). Defaults to the provided PATH.
 - `--output-html PATH`: Generate an HTML report at the specified path
 - `--full`: Display all Tables with full rows (Default: 10 Rows)
+- `--skip`: Skips in strucutre analyse unused style sheets
 - `--verbose, -v`: Enable verbose output for debugging
 
 ## File Support
@@ -256,7 +257,7 @@ This will run all analyses (duplicates, unused selectors, structure) and generat
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/your-username/css-analyzer.git
+git clone https://github.com/AlexsdeG/Project-CSS-Analyser.git
 cd css-analyzer
 ```
 
@@ -270,12 +271,6 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```bash
 pip install -r requirements.txt
 pip install -e .
-```
-
-### Running Tests
-
-```bash
-python -m pytest tests/
 ```
 
 ### Contributing
@@ -294,13 +289,13 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 If you encounter any issues or have questions:
 
-1. Check the [Issues](https://github.com/your-username/css-analyzer/issues) page
+1. Check the [Issues](https://github.com/AlexsdeG/Project-CSS-Analyser/issues) page
 2. Create a new issue with detailed information about your problem
 3. Include sample CSS files and expected behavior when possible
 
 ## Changelog
 
-### Version 1.0.0
+### Version 1.3.1
 
 - Initial release
 - Duplicate CSS analysis

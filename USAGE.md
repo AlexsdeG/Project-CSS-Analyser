@@ -6,9 +6,9 @@ The CSS Analyzer is now ready to use! Here's how to get started:
 
 ### Installation
 
-1. Navigate to the css_analyser directory:
+1. Navigate to the Project-CSS-Analyser directory:
 ```bash
-cd /home/z/my-project/css_analyser
+cd /home/z/my-project/Project-CSS-Analyser
 ```
 
 2. Install dependencies (if not already installed):

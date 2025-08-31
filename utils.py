@@ -48,10 +48,18 @@ def to_abs(p: Path) -> Path:
     return p.resolve()
 
 def make_file_href(p: Path) -> str:
-    """Build a file:/// URL (URL-encoded) for a filesystem path."""
+    """Build a file:/// URL for a filesystem path.
+
+    Uses Path.as_uri() to produce a proper file URI that:
+    - keeps the Windows drive colon unencoded (file:///D:/...),
+    - percent-encodes unsafe characters (spaces -> %20, non-ASCII -> UTF-8 percent-encoded).
+    """
     p = to_abs(p)
-    # Use POSIX style for URLs and percent-encode
-    return "file:///" + quote(p.as_posix())
+    try:
+        return p.as_uri()
+    except Exception:
+        # Fallback: quote path but keep ':' and '/' safe (avoid encoding drive colon).
+        return "file:///" + quote(p.as_posix(), safe='/:')
 
 def make_rel_label(p: Path, project_root: Path) -> str:
     """Return a label like "\\sample_project\\style.css" relative to project_root.
