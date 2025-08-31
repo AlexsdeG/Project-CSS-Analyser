@@ -296,7 +296,7 @@
         </div>
         
         {% if analysis_type == 'duplicates' %}
-            {{ duplicates_section(results) }}
+            {{ duplicates_section(results, merge) }}
         {% elif analysis_type == 'unused' %}
             {{ unused_section(results) }}
         {% elif analysis_type == 'structure' %}

@@ -35,8 +35,9 @@ def cli():
 @click.argument('path', type=click.Path(exists=True, path_type=Path))
 @click.option('--output-html', type=click.Path(path_type=Path), 
               help='Generate an HTML report at the specified path.')
+@click.option('--merge', is_flag=True, help='Generate merged CSS rules for duplicate selectors.')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
-def duplicates(path, output_html, verbose):
+def duplicates(path, output_html, merge, verbose):
     """Find duplicate selectors, @media rules, and comments."""
     if verbose:
         console.print(f"[yellow]Analyzing duplicates in: {path}[/yellow]")
@@ -52,15 +53,15 @@ def duplicates(path, output_html, verbose):
     
     # Perform analysis
     analyzer = DuplicateAnalyzer()
-    results = analyzer.analyze(css_files)
+    results = analyzer.analyze(css_files, merge=merge)
     
     # Report results
     console_reporter = ConsoleReporter()
-    console_reporter.report_duplicates(results)
+    console_reporter.report_duplicates(results, merge=merge)
     
     if output_html:
         html_reporter = HTMLReporter()
-        html_reporter.generate_report(results, output_html, analysis_type='duplicates')
+        html_reporter.generate_report(results, output_html, analysis_type='duplicates', merge=merge)
         console.print(f"[green]HTML report generated: {output_html}[/green]")
 
 @cli.command()

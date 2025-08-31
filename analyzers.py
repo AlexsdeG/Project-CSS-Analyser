@@ -72,7 +72,7 @@ class BaseAnalyzer:
 class DuplicateAnalyzer(BaseAnalyzer):
     """Analyzer for finding duplicate CSS selectors, media queries, and comments."""
     
-    def analyze(self, css_files: List[Path]) -> Dict[str, Any]:
+    def analyze(self, css_files: List[Path], merge: bool = False) -> Dict[str, Any]:
         """Analyze CSS files for duplicates."""
         results = {
             'selectors': defaultdict(list),
@@ -92,10 +92,13 @@ class DuplicateAnalyzer(BaseAnalyzer):
                     selector = rule.selectorText
                     if selector:
                         line = self._get_line_number(css_content, rule.selectorText, str(css_file))
-                        results['selectors'][selector].append({
+                        location = {
                             'file': str(css_file),
                             'line': line
-                        })
+                        }
+                        if merge:
+                            location['rule'] = rule
+                        results['selectors'][selector].append(location)
                 
                 elif isinstance(rule, cssutils.css.CSSMediaRule):
                     # Handle media queries
@@ -113,10 +116,13 @@ class DuplicateAnalyzer(BaseAnalyzer):
                             selector = inner_rule.selectorText
                             if selector:
                                 line = self._get_line_number(css_content, inner_rule.selectorText, str(css_file))
-                                results['selectors'][selector].append({
+                                location = {
                                     'file': str(css_file),
                                     'line': line
-                                })
+                                }
+                                if merge:
+                                    location['rule'] = inner_rule
+                                results['selectors'][selector].append(location)
                 
                 elif isinstance(rule, cssutils.css.CSSComment):
                     # Handle comments
@@ -132,6 +138,45 @@ class DuplicateAnalyzer(BaseAnalyzer):
         results['selectors'] = {k: v for k, v in results['selectors'].items() if len(v) > 1}
         results['media_queries'] = {k: v for k, v in results['media_queries'].items() if len(v) > 1}
         results['comments'] = {k: v for k, v in results['comments'].items() if len(v) > 1}
+        
+        # Generate merged CSS if requested
+        if merge and results['selectors']:
+            results['merged'] = {}
+            for selector, locations in results['selectors'].items():
+                merged_props = {}  # name -> {'value': str, 'priority': str}
+                
+                # Process each rule in order
+                for location in locations:
+                    if 'rule' in location:
+                        for prop in location['rule'].style:
+                            name = prop.name
+                            value = prop.value
+                            priority = prop.priority
+                            
+                            if name not in merged_props:
+                                merged_props[name] = {'value': value, 'priority': priority}
+                            else:
+                                existing_priority = merged_props[name]['priority']
+                                if priority == 'important' and existing_priority != 'important':
+                                    merged_props[name] = {'value': value, 'priority': priority}
+                                elif priority == existing_priority:
+                                    # Same priority, later wins
+                                    merged_props[name] = {'value': value, 'priority': priority}
+                                # If existing is important and new is not, keep existing
+                
+                # Create the merged style
+                merged_style = cssutils.css.CSSStyleDeclaration()
+                for name, data in merged_props.items():
+                    merged_style.setProperty(name, data['value'], data['priority'])
+                
+                # Format the merged CSS with proper indentation
+                properties = []
+                for prop in merged_style:
+                    important = ' !important' if prop.priority == 'important' else ''
+                    properties.append(f"    {prop.name}: {prop.value}{important};")
+                merged_css = f"{selector} {{\n" + "\n".join(properties) + "\n}"
+                results['merged'][selector] = merged_css
+                
         results['errors'] = self.errors
         
         return results

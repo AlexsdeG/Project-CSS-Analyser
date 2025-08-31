@@ -5,6 +5,7 @@ A comprehensive CLI tool for analyzing CSS and web project files. CSS Analyzer h
 ## Features
 
 - **Duplicate Analysis**: Find duplicate CSS selectors, media queries, and comments
+- **Merged CSS Generation**: Generate merged CSS rules for duplicate selectors with proper cascading
 - **Unused Selector Detection**: Identify unused CSS selectors by scanning HTML, PHP, and JS files
 - **Structure Analysis**: Analyze CSS structure for prefixes, comments, and patterns
 - **Multiple Output Formats**: Rich console output and detailed HTML reports
@@ -68,6 +69,9 @@ Identify unused CSS selectors by scanning HTML, PHP, and JS files:
 # Find unused selectors in a project
 css-analyzer unused ./path/to/project/
 
+# Generate merged CSS rules for duplicates:
+python -m main duplicates ./path/to/project --merge
+
 # Generate HTML report
 css-analyzer unused ./path/to/project/ --output-html unused-report.html
 
@@ -109,6 +113,7 @@ css-analyzer analyze ./path/to/project/ --verbose
 
 All commands support the following options:
 
+- `--merge`: Generate merged CSS rules for duplicate selectors
 - `--output-html PATH`: Generate an HTML report at the specified path
 - `--verbose, -v`: Enable verbose output for debugging
 

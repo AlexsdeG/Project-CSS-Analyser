@@ -1,0 +1,5 @@
+/* Duplicate: .note defined 4 times in another file */
+.note {
+    border-radius: 3px;
+    font-size: 11px !important;
+}

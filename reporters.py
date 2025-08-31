@@ -17,7 +17,7 @@ class ConsoleReporter:
     def __init__(self):
         self.console = Console()
     
-    def report_duplicates(self, results: Dict[str, Any]):
+    def report_duplicates(self, results: Dict[str, Any], merge: bool = False):
         """Report duplicate analysis results."""
         self.console.print(Panel.fit("[bold blue]Duplicate CSS Analysis Report[/bold blue]"))
         
@@ -30,8 +30,9 @@ class ConsoleReporter:
             selector_table.add_column("Locations", style="yellow")
             
             for selector, locations in results['selectors'].items():
-                location_str = "\n".join([f"{loc['file']}:{loc['line']}" for loc in locations])
-                selector_table.add_row(selector, str(len(locations)), location_str)
+                count = len(locations)
+                locations_str = "\n".join([f"{loc['file']}:{loc['line']}" for loc in locations])
+                selector_table.add_row(selector, str(count), locations_str)
             
             self.console.print(selector_table)
         else:
@@ -46,8 +47,9 @@ class ConsoleReporter:
             media_table.add_column("Locations", style="yellow")
             
             for media_query, locations in results['media_queries'].items():
-                location_str = "\n".join([f"{loc['file']}:{loc['line']}" for loc in locations])
-                media_table.add_row(media_query, str(len(locations)), location_str)
+                count = len(locations)
+                locations_str = "\n".join([f"{loc['file']}:{loc['line']}" for loc in locations])
+                media_table.add_row(media_query, str(count), locations_str)
             
             self.console.print(media_table)
         else:
@@ -62,20 +64,26 @@ class ConsoleReporter:
             comment_table.add_column("Locations", style="yellow")
             
             for comment, locations in results['comments'].items():
-                # Truncate long comments
-                comment_text = comment[:100] + "..." if len(comment) > 100 else comment
-                location_str = "\n".join([f"{loc['file']}:{loc['line']}" for loc in locations])
-                comment_table.add_row(comment_text, str(len(locations)), location_str)
+                count = len(locations)
+                locations_str = "\n".join([f"{loc['file']}:{loc['line']}" for loc in locations])
+                comment_table.add_row(comment, str(count), locations_str)
             
             self.console.print(comment_table)
         else:
             self.console.print("[green]✓ No duplicate comments found.[/green]")
         
+        # Report merged CSS if available
+        if merge and 'merged' in results and results['merged']:
+            self.console.print("\n[bold green]Merged CSS Rules:[/bold green]")
+            for selector, merged_css in results['merged'].items():
+                self.console.print(f"[cyan]{merged_css}[/cyan]")
+                self.console.print()
+        
         # Report errors
         if results['errors']:
             self.console.print("\n[bold red]Errors:[/bold red]")
             for error in results['errors']:
-                self.console.print(f"[red]• {error}[/red]")
+                self.console.print(f"- {error}")
     
     def report_unused_selectors(self, results: Dict[str, Any]):
         """Report unused selector analysis results."""
@@ -288,7 +296,7 @@ class HTMLReporter:
         <h1>CSS Analysis Report</h1>
         
         {% if analysis_type == 'duplicates' %}
-            {{ duplicates_section(results) }}
+            {{ duplicates_section(results, merge) }}
         {% elif analysis_type == 'unused' %}
             {{ unused_section(results) }}
         {% elif analysis_type == 'structure' %}
@@ -299,7 +307,7 @@ class HTMLReporter:
 </html>
         """)
     
-    def generate_report(self, results: Dict[str, Any], output_path: Path, analysis_type: str):
+    def generate_report(self, results: Dict[str, Any], output_path: Path, analysis_type: str, merge: bool = False):
         """Generate HTML report for a specific analysis type."""
         self._ensure_reports_folder()
         
@@ -310,6 +318,7 @@ class HTMLReporter:
         html_content = self.template.render(
             results=results,
             analysis_type=analysis_type,
+            merge=merge,
             duplicates_section=self._duplicates_section,
             unused_section=self._unused_section,
             structure_section=self._structure_section
@@ -373,7 +382,7 @@ class HTMLReporter:
         
         <div class="section">
             <h2>1. Duplicate Analysis</h2>
-            {{ duplicates_section(all_results.get('duplicates', {})) }}
+            {{ duplicates_section(all_results.get('duplicates', {}), 'merged' in all_results.get('duplicates', {})) }}
         </div>
         
         <div class="section">
@@ -390,7 +399,7 @@ class HTMLReporter:
 </html>
         """)
     
-    def _duplicates_section(self, results: Dict[str, Any]) -> str:
+    def _duplicates_section(self, results: Dict[str, Any], merge: bool = False) -> str:
         """Generate HTML for duplicates section."""
         html = []
         
@@ -405,8 +414,9 @@ class HTMLReporter:
             html.append('<tr><th>Selector</th><th>Count</th><th>Locations</th></tr>')
             
             for selector, locations in results['selectors'].items():
-                location_str = '<br>'.join([f"{loc['file']}:{loc['line']}" for loc in locations])
-                html.append(f'<tr><td><code>{selector}</code></td><td>{len(locations)}</td><td>{location_str}</td></tr>')
+                count = len(locations)
+                locations_str = '<br>'.join([f"{loc['file']}:{loc['line']}" for loc in locations])
+                html.append(f'<tr><td>{selector}</td><td>{count}</td><td>{locations_str}</td></tr>')
             
             html.append('</table>')
         
@@ -417,8 +427,9 @@ class HTMLReporter:
             html.append('<tr><th>Media Query</th><th>Count</th><th>Locations</th></tr>')
             
             for media_query, locations in results['media_queries'].items():
-                location_str = '<br>'.join([f"{loc['file']}:{loc['line']}" for loc in locations])
-                html.append(f'<tr><td><code>{media_query}</code></td><td>{len(locations)}</td><td>{location_str}</td></tr>')
+                count = len(locations)
+                locations_str = '<br>'.join([f"{loc['file']}:{loc['line']}" for loc in locations])
+                html.append(f'<tr><td>{media_query}</td><td>{count}</td><td>{locations_str}</td></tr>')
             
             html.append('</table>')
         
@@ -429,11 +440,17 @@ class HTMLReporter:
             html.append('<tr><th>Comment</th><th>Count</th><th>Locations</th></tr>')
             
             for comment, locations in results['comments'].items():
-                comment_text = comment[:100] + "..." if len(comment) > 100 else comment
-                location_str = '<br>'.join([f"{loc['file']}:{loc['line']}" for loc in locations])
-                html.append(f'<tr><td><code>{comment_text}</code></td><td>{len(locations)}</td><td>{location_str}</td></tr>')
+                count = len(locations)
+                locations_str = '<br>'.join([f"{loc['file']}:{loc['line']}" for loc in locations])
+                html.append(f'<tr><td>{comment}</td><td>{count}</td><td>{locations_str}</td></tr>')
             
             html.append('</table>')
+        
+        # Merged CSS
+        if merge and 'merged' in results and results['merged']:
+            html.append('<h3>Merged CSS Rules</h3><br>')
+            for selector, merged_css in results['merged'].items():
+                html.append(f'<pre><code>{merged_css}</code></pre><br>')
         
         return ''.join(html)
     
