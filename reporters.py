@@ -350,9 +350,12 @@ class ConsoleReporter:
             shown = sorted_prefixes if self.full else sorted_prefixes[: (self.table_cap or DEFAULT_TABLE_CAP)]
             for prefix, count in shown:
                 classes = results.get("prefix_groups", {}).get(prefix, [])
-                example_classes = ", ".join(classes[:3])
-                if len(classes) > 3:
-                    example_classes += f" (+{len(classes) - 3} more)"
+                if self.full:
+                    example_classes = ", ".join(classes)
+                else:
+                    example_classes = ", ".join(classes[:3])
+                    if len(classes) > 3:
+                        example_classes += f" (+{len(classes) - 3} more)"
                 prefix_table.add_row(prefix, str(count), example_classes)
             self.console.print(prefix_table)
             if not self.full and len(sorted_prefixes) > len(shown):
@@ -373,11 +376,14 @@ class ConsoleReporter:
 
             shown = self._maybe_cap(comments_list)
             for comment in shown:
-                comment_text = (
-                    (comment.get("text", "")[:80] + "...")
-                    if len(comment.get("text", "")) > 80
-                    else comment.get("text", "")
-                )
+                if self.full:
+                    comment_text = comment.get("text", "")
+                else:
+                    comment_text = (
+                        (comment.get("text", "")[:80] + "...")
+                        if len(comment.get("text", "")) > 80
+                        else comment.get("text", "")
+                    )
                 file_cell = (
                     self._format_file_line(f"{comment.get('file','')}:{comment.get('line','')}")
                     if self.use_vscode and str(comment.get("line", "")).isdigit()
@@ -915,9 +921,12 @@ class HTMLReporter:
                 shown = sorted_prefixes if self.full else sorted_prefixes[: (self.table_cap or DEFAULT_TABLE_CAP)]
                 for prefix, count in shown:
                     classes = results.get("prefix_groups", {}).get(prefix, [])
-                    example_classes = ", ".join(classes[:3])
-                    if len(classes) > 3:
-                        example_classes += f" (+{len(classes) - 3} more)"
+                    if self.full:
+                        example_classes = ", ".join(classes)
+                    else:
+                        example_classes = ", ".join(classes[:3])
+                        if len(classes) > 3:
+                            example_classes += f" (+{len(classes) - 3} more)"
                     html.append(
                         f"<tr><td><code>{prefix}</code></td><td>{count}</td><td>{example_classes}</td></tr>"
                     )
@@ -938,7 +947,10 @@ class HTMLReporter:
             shown = self._maybe_cap(comments)
             for comment in shown:
                 text = comment.get("text", "")
-                comment_text = text[:80] + "..." if len(text) > 80 else text
+                if self.full:
+                    comment_text = text
+                else:
+                    comment_text = text[:80] + "..." if len(text) > 80 else text
                 file_cell = (
                     self._format_file_line_html(f"{comment.get('file','')}:{comment.get('line','')}")
                     if self.use_vscode and str(comment.get('line','')).isdigit()
