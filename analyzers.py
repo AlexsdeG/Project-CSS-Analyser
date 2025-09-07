@@ -102,12 +102,11 @@ class DuplicateAnalyzer(BaseAnalyzer):
                 unreferenced_css = page_map.get('unreferenced_css', [])
             else:
                 pages = page_map
-            # Attach per-page load order (only non-empty chains) if pages available
-            if pages:
+            # Attach per-page load order including pages with empty chains
+            if pages is not None:
                 results['load_order'] = {
                     k: (v.get('css_chain', []) or [])
                     for k, v in pages.items()
-                    if v.get('css_chain')
                 }
         if unreferenced_css:
             results['unreferenced_css'] = list(unreferenced_css)
@@ -635,8 +634,8 @@ class StructureAnalyzer(BaseAnalyzer):
                     results['total_comments'] += 1
         
         # Attach load order (per page) and analyzed files for reporter context
-        if pages:
-            results['load_order'] = {page: (info.get('css_chain', []) or []) for page, info in pages.items() if info.get('css_chain')}
+        if pages is not None:
+            results['load_order'] = {page: (info.get('css_chain', []) or []) for page, info in pages.items()}
         results['analyzed_files'] = [str(Path(p).resolve()) for p in css_files]
 
         results['errors'] = self.errors

@@ -14,10 +14,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from analyzers import DuplicateAnalyzer, UnusedSelectorAnalyzer, StructureAnalyzer
 from reporters import ConsoleReporter, HTMLReporter
-from utils import get_css_files, get_source_files, parse_html_for_css
+from utils import get_css_files, get_source_files, parse_html_for_css, parse_list_option
 
 console = Console()
-version="1.3.1"
+version="1.4.0"
 
 @click.group()
 @click.version_option(version=version, prog_name="main.py")
@@ -43,27 +43,31 @@ def cli():
 @click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
 @click.option('--vscode', is_flag=True, help='Open links in VS Code (vscode:// deep links).')
-def duplicates(path, output_html, merge, per_page_merge, page_root, skip, full, verbose, vscode):
+@click.option('--blacklist', type=str, default='', help='Comma-separated list of filenames (name.ext) or /dir/ rules to exclude.')
+@click.option('--whitelist', type=str, default='', help='Comma-separated list of filenames (name.ext) or /dir/ rules to include exclusively.')
+def duplicates(path, output_html, merge, per_page_merge, page_root, skip, full, verbose, vscode, blacklist, whitelist):
     """Find duplicate selectors, @media rules, and comments."""
     if verbose:
         console.print(f"[yellow]Analyzing duplicates in: {path}[/yellow]")
     
     # Get CSS files to analyze
-    css_files = get_css_files(path)
-    if not css_files:
-        console.print("[red]No CSS files found in the specified path.[/red]")
-        return
-    
+    wl = parse_list_option(whitelist)
+    bl = parse_list_option(blacklist)
+    # Build page mapping for load order (always)
+    root = page_root or path
     if verbose:
-        console.print(f"[green]Found {len(css_files)} CSS files to analyze[/green]")
-    
-    # Page mapping if merging or skipping is requested
-    page_info = None
-    if merge or per_page_merge or skip:
-        root = page_root or path
+        console.print(f"[yellow]Building page load order from: {root}[/yellow]")
+    page_info = parse_html_for_css(root, whitelist=wl, blacklist=bl)
+
+    # Get CSS files to analyze (after parsing page map)
+    css_files = get_css_files(path, whitelist=wl, blacklist=bl)
+    if not css_files:
+        console.print("[yellow]No CSS files found in the specified path. Showing load order only (if any).[/yellow]")
+    else:
         if verbose:
-            console.print(f"[yellow]Building page load order from: {root}[/yellow]")
-        page_info = parse_html_for_css(root)
+            console.print(f"[green]Found {len(css_files)} CSS files to analyze[/green]")
+    
+    # page_info already built above; keep it regardless of flags so load order is shown
 
     # Perform analysis
     analyzer = DuplicateAnalyzer()
@@ -87,14 +91,18 @@ def duplicates(path, output_html, merge, per_page_merge, page_root, skip, full, 
 @click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
 @click.option('--vscode', is_flag=True, help='Open links in VS Code (vscode:// deep links).')
-def unused(path, output_html, page_root, skip, full, verbose, vscode):
+@click.option('--blacklist', type=str, default='', help='Comma-separated list of filenames (name.ext) or /dir/ rules to exclude.')
+@click.option('--whitelist', type=str, default='', help='Comma-separated list of filenames (name.ext) or /dir/ rules to include exclusively.')
+def unused(path, output_html, page_root, skip, full, verbose, vscode, blacklist, whitelist):
     """Find unused CSS selectors by scanning HTML, PHP, and JS files."""
     if verbose:
         console.print(f"[yellow]Analyzing unused selectors in: {path}[/yellow]")
     
     # Get CSS and source files
-    css_files = get_css_files(path)
-    source_files = get_source_files(path)
+    wl = parse_list_option(whitelist)
+    bl = parse_list_option(blacklist)
+    css_files = get_css_files(path, whitelist=wl, blacklist=bl)
+    source_files = get_source_files(path, whitelist=wl, blacklist=bl)
     
     if not css_files:
         console.print("[red]No CSS files found in the specified path.[/red]")
@@ -107,7 +115,7 @@ def unused(path, output_html, page_root, skip, full, verbose, vscode):
         console.print(f"[green]Found {len(css_files)} CSS files and {len(source_files)} source files[/green]")
     
     # Page mapping
-    page_info = parse_html_for_css(page_root or path)
+    page_info = parse_html_for_css(page_root or path, whitelist=wl, blacklist=bl)
 
     # Perform analysis
     analyzer = UnusedSelectorAnalyzer()
@@ -131,25 +139,28 @@ def unused(path, output_html, page_root, skip, full, verbose, vscode):
 @click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
 @click.option('--vscode', is_flag=True, help='Open links in VS Code (vscode:// deep links).')
-def structure(path, output_html, page_root, skip, full, verbose, vscode):
+@click.option('--blacklist', type=str, default='', help='Comma-separated list of filenames (name.ext) or /dir/ rules to exclude.')
+@click.option('--whitelist', type=str, default='', help='Comma-separated list of filenames (name.ext) or /dir/ rules to include exclusively.')
+def structure(path, output_html, page_root, skip, full, verbose, vscode, blacklist, whitelist):
     """Analyze CSS structure for prefixes, comments, and patterns."""
     if verbose:
         console.print(f"[yellow]Analyzing CSS structure in: {path}[/yellow]")
     
-    # Get CSS files to analyze
-    css_files = get_css_files(path)
-    if not css_files:
-        console.print("[red]No CSS files found in the specified path.[/red]")
-        return
-    
-    if verbose:
-        console.print(f"[green]Found {len(css_files)} CSS files to analyze[/green]")
-    
-    # Build page map to report per-page load order (defaults to PATH when --page-root not provided)
+    # Build CSS filters and page map
+    wl = parse_list_option(whitelist)
+    bl = parse_list_option(blacklist)
     root = page_root or path
     if verbose:
         console.print(f"[yellow]Building page load order from: {root}[/yellow]")
-    page_info = parse_html_for_css(root)
+    page_info = parse_html_for_css(root, whitelist=wl, blacklist=bl)
+
+    # Get CSS files to analyze
+    css_files = get_css_files(path, whitelist=wl, blacklist=bl)
+    if not css_files:
+        console.print("[yellow]No CSS files found in the specified path. Showing load order only (if any).[/yellow]")
+    else:
+        if verbose:
+            console.print(f"[green]Found {len(css_files)} CSS files to analyze[/green]")
 
     # Perform analysis
     analyzer = StructureAnalyzer()
@@ -172,14 +183,18 @@ def structure(path, output_html, page_root, skip, full, verbose, vscode):
 @click.option('--full', is_flag=True, help='Show all rows in tables (CLI and HTML).')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output.')
 @click.option('--vscode', is_flag=True, help='Open links in VS Code (vscode:// deep links).')
-def analyze(path, output_html, page_root, full, verbose, vscode):
+@click.option('--blacklist', type=str, default='', help='Comma-separated list of filenames (name.ext) or /dir/ rules to exclude.')
+@click.option('--whitelist', type=str, default='', help='Comma-separated list of filenames (name.ext) or /dir/ rules to include exclusively.')
+def analyze(path, output_html, page_root, full, verbose, vscode, blacklist, whitelist):
     """Run all analyses (duplicates, unused, structure)."""
     if verbose:
         console.print(f"[yellow]Running comprehensive analysis on: {path}[/yellow]")
     
     # Get all files
-    css_files = get_css_files(path)
-    source_files = get_source_files(path)
+    wl = parse_list_option(whitelist)
+    bl = parse_list_option(blacklist)
+    css_files = get_css_files(path, whitelist=wl, blacklist=bl)
+    source_files = get_source_files(path, whitelist=wl, blacklist=bl)
     
     if not css_files:
         console.print("[red]No CSS files found in the specified path.[/red]")
@@ -189,7 +204,7 @@ def analyze(path, output_html, page_root, full, verbose, vscode):
         console.print(f"[green]Found {len(css_files)} CSS files and {len(source_files)} source files[/green]")
     
     # Build page mapping once
-    page_info = parse_html_for_css(page_root or path)
+    page_info = parse_html_for_css(page_root or path, whitelist=wl, blacklist=bl)
 
     # Perform all analyses
     all_results = {}

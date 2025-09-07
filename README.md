@@ -123,12 +123,14 @@ css-analyzer analyze ./path/to/project/ --verbose
 All commands support the following options:
 
 - `--merge`: Generate merged CSS rules for duplicate selectors (uses CSS cascade: !important beats normal; later overrides earlier when priorities equal)
-- `--per-page-merge`: Also produce merged CSS per page using each page's concrete load order
+- `--per-page-merge`: - Also produce merged CSS per page using each page's concrete load order
 - `--page-root PATH`: Directory where HTML/PHP pages live (used to compute CSS load order and unused CSS files). Defaults to the provided PATH.
 - `--output-html PATH`: Generate an HTML report at the specified path
 - `--skip`: General: Skips the unused style sheets
 - `--full`: General: Display all Tables with full rows (Default: 10 Rows)
 - `--vscode`: General: Table links get vscode:/// with line number attached
+- `--blacklist VALUE`: General: Comma-separated list of filenames (name.ext) and/or directory rules (`/dir/`) to exclude from analysis (applies to CSS, HTML, PHP, JS). Example: `--blacklist="index.php,frontend.js,/assets/style/"`
+- `--whitelist VALUE`: General: Comma-separated list of filenames (name.ext) and/or directory rules (`/dir/`) to include exclusively. When provided, only matching files/dirs are analyzed. Example: `--whitelist="style3.css,/theme/"`
 - `--verbose, -v`: General: Enable verbose output for debugging
 
 ## File Support

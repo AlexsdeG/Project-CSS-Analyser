@@ -47,6 +47,65 @@ DEFAULT_TABLE_CAP = 10
 def to_abs(p: Path) -> Path:
     return p.resolve()
 
+# -------------------------------
+# Filtering helpers (whitelist/blacklist)
+# -------------------------------
+
+def parse_list_option(value: str | None) -> List[str]:
+    """Parse a comma-separated option string into a normalized list.
+
+    Trims whitespace and ignores empty entries. Returns lowercase strings.
+    """
+    if not value:
+        return []
+    parts = [p.strip() for p in value.split(',')]
+    return [p.lower() for p in parts if p]
+
+def build_file_filter(whitelist: List[str] | None, blacklist: List[str] | None):
+    """Return a predicate allowed(Path) honoring whitelist/blacklist rules.
+
+    Rules:
+    - Directory rules are written as "/dir/" (leading and trailing slash) and match
+      if that segment appears in the POSIX path (case-insensitive).
+    - File rules are "name.ext" and match the basename (case-insensitive) exactly.
+    - When whitelist is non-empty, only files matching at least one whitelist rule are allowed.
+    - Regardless of whitelist, any file matching a blacklist rule is disallowed.
+    """
+    wl = [r.lower() for r in (whitelist or [])]
+    bl = [r.lower() for r in (blacklist or [])]
+
+    def is_dir_rule(rule: str) -> bool:
+        return len(rule) >= 2 and rule.startswith('/') and rule.endswith('/')
+
+    def match_rule(p: Path, rule: str) -> bool:
+        posix = p.as_posix().lower()
+        name = p.name.lower()
+        if is_dir_rule(rule):
+            seg = rule
+            # Ensure rule has leading and trailing slash
+            if not seg.startswith('/'):
+                seg = '/' + seg
+            if not seg.endswith('/'):
+                seg = seg + '/'
+            # Ensure posix has trailing slash for substring check
+            posix_check = posix if posix.endswith('/') else posix + '/'
+            return seg in posix_check
+        else:
+            # filename.ext exact match
+            return name == rule
+
+    def allowed(p: Path) -> bool:
+        # Apply whitelist if provided
+        if wl:
+            if not any(match_rule(p, r) for r in wl):
+                return False
+        # Apply blacklist
+        if bl and any(match_rule(p, r) for r in bl):
+            return False
+        return True
+
+    return allowed
+
 def make_file_href(p: Path) -> str:
     """Build a file:/// URL for a filesystem path.
 
@@ -99,7 +158,7 @@ def make_html_link(label: str, href: str) -> str:
     """Return a yellow-styled anchor tag for HTML reports."""
     return f'<a href="{href}" target="_blank" class="file-link">{label}</a>'
 
-def get_css_files(path: Path, exclude_dirs: Set[str] = None) -> List[Path]:
+def get_css_files(path: Path, exclude_dirs: Set[str] = None, whitelist: List[str] | None = None, blacklist: List[str] | None = None) -> List[Path]:
     """
     Get all CSS files from the given path.
     
@@ -128,9 +187,10 @@ def get_css_files(path: Path, exclude_dirs: Set[str] = None) -> List[Path]:
                 if file_path.suffix.lower() in DEFAULT_CSS_EXTENSIONS:
                     css_files.append(file_path)
     
-    return sorted(css_files)
+    allowed = build_file_filter(whitelist, blacklist)
+    return sorted([p for p in css_files if allowed(p)])
 
-def get_source_files(path: Path, exclude_dirs: Set[str] = None) -> List[Path]:
+def get_source_files(path: Path, exclude_dirs: Set[str] = None, whitelist: List[str] | None = None, blacklist: List[str] | None = None) -> List[Path]:
     """
     Get all source files (HTML, PHP, JS) from the given path.
     
@@ -159,7 +219,8 @@ def get_source_files(path: Path, exclude_dirs: Set[str] = None) -> List[Path]:
                 if file_path.suffix.lower() in DEFAULT_SOURCE_EXTENSIONS:
                     source_files.append(file_path)
     
-    return sorted(source_files)
+    allowed = build_file_filter(whitelist, blacklist)
+    return sorted([p for p in source_files if allowed(p)])
 
 def _iter_files(path: Path, include_exts: Set[str], exclude_dirs: Set[str]) -> List[Path]:
     """Internal helper to iterate files by extensions under a path."""
@@ -221,7 +282,7 @@ def resolve_css_imports(entry_css: Path) -> List[Path]:
     dfs(entry_css)
     return ordered
 
-def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, Any]:
+def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None, whitelist: List[str] | None = None, blacklist: List[str] | None = None) -> Dict[str, Any]:
     """
     Scan HTML/PHP pages to determine concrete CSS load order per page.
 
@@ -237,7 +298,8 @@ def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, A
     all_css: Set[str] = set()
     uncertain_css: Dict[str, Set[str]] = {}
 
-    page_files = _iter_files(path, PAGE_EXTENSIONS, exclude_dirs)
+    allowed = build_file_filter(whitelist, blacklist)
+    page_files = [p for p in _iter_files(path, PAGE_EXTENSIONS, exclude_dirs) if allowed(p)]
 
     # Patterns
     link_pattern = re.compile(r"<link[^>]+rel=[\"\']stylesheet[\"\'][^>]*href=[\"\']([^\"\']+)[\"\']", re.IGNORECASE)
@@ -579,19 +641,23 @@ def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, A
 
         for href in hrefs:
             p = _resolve_path(page, href)
-            if p and p.suffix.lower() in DEFAULT_CSS_EXTENSIONS:
+            if p and p.suffix.lower() in DEFAULT_CSS_EXTENSIONS and allowed(p):
                 # Resolve imports for this stylesheet
                 flattened = resolve_css_imports(p)
                 for f in flattened:
+                    if not allowed(f):
+                        continue
                     css_chain.append(str(f.resolve()))
                     all_css.add(str(f.resolve()))
 
         # Inline <style> @import
         for import_href in style_import_pattern.findall(content):
             p = _resolve_path(page, import_href)
-            if p and p.suffix.lower() in DEFAULT_CSS_EXTENSIONS:
+            if p and p.suffix.lower() in DEFAULT_CSS_EXTENSIONS and allowed(p):
                 flattened = resolve_css_imports(p)
                 for f in flattened:
+                    if not allowed(f):
+                        continue
                     css_chain.append(str(f.resolve()))
                     all_css.add(str(f.resolve()))
 
@@ -608,21 +674,27 @@ def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, A
                 for php_file in to_scan:
                     css_paths, includes = _scan_php_for_css(php_file, visited_php, handle_map, enqueued_handles)
                     for cp in css_paths:
+                        if not allowed(cp):
+                            continue
                         flattened = resolve_css_imports(cp)
                         for f in flattened:
+                            if not allowed(f):
+                                continue
                             css_chain.append(str(f.resolve()))
                             all_css.add(str(f.resolve()))
                     for inc in includes:
-                        if inc not in visited_php:
+                        if inc not in visited_php and allowed(inc):
                             next_round.append(inc)
                 to_scan = next_round
                 depth += 1
             # After scanning all related PHP files, resolve any enqueued handles
             for h in sorted(enqueued_handles):
                 pth = handle_map.get(h)
-                if pth and pth.exists():
+                if pth and pth.exists() and allowed(pth):
                     flattened = resolve_css_imports(pth)
                     for f in flattened:
+                        if not allowed(f):
+                            continue
                         css_chain.append(str(f.resolve()))
                         all_css.add(str(f.resolve()))
 
@@ -631,7 +703,7 @@ def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, A
         page_js: List[Path] = []
         for js in js_srcs:
             jp = _resolve_path(page, js)
-            if jp and jp.suffix.lower() in {'.js', '.mjs'} and jp.exists():
+            if jp and jp.suffix.lower() in {'.js', '.mjs'} and jp.exists() and allowed(jp):
                 page_js.append(jp)
         js_files_for_pages[page] = page_js
 
@@ -653,7 +725,7 @@ def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, A
                 for m in js_dynamic_link_patterns[2].finditer(js_content):
                     href = m.group(1)
                     p = _resolve_path(jp, href)
-                    if p and p.suffix.lower() in DEFAULT_CSS_EXTENSIONS:
+                    if p and p.suffix.lower() in DEFAULT_CSS_EXTENSIONS and allowed(p):
                         uncertain.add(str(p.resolve()))
         if str(page) in pages:
             pages[str(page)]['uncertain_css'] = sorted(uncertain)
@@ -661,7 +733,7 @@ def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, A
                 all_css.add(u)
 
     # Determine unreferenced CSS: all CSS on filesystem under path minus discovered
-    all_fs_css = set(str(p.resolve()) for p in _iter_files(path, DEFAULT_CSS_EXTENSIONS, exclude_dirs))
+    all_fs_css = set(str(p.resolve()) for p in _iter_files(path, DEFAULT_CSS_EXTENSIONS, exclude_dirs) if allowed(p))
     unreferenced_css = sorted(all_fs_css - set(all_css))
 
     return {

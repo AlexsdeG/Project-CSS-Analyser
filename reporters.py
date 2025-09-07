@@ -81,6 +81,26 @@ class ConsoleReporter:
         """Report duplicate analysis results."""
         self.console.print(Panel.fit("[bold blue]Duplicate CSS Analysis Report[/bold blue]"))
 
+        # Load order per page
+        if "load_order" in results:
+            load_order = results.get("load_order") or {}
+            self.console.print("\n[bold blue]Load Order (per page):[/bold blue]")
+            if any(load_order.values()):
+                for page, chain in load_order.items():
+                    if not chain:
+                        continue
+                    table = Table(title=str(page))
+                    table.add_column("Index", justify="right")
+                    table.add_column("CSS File", overflow="fold")
+                    show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
+                    for idx, item in enumerate(show_chain):
+                        table.add_row(str(idx + 1), self._link_cell(item))
+                    if not self.full and len(chain) > len(show_chain):
+                        table.add_row("…", f"(+{len(chain) - len(show_chain)} more)")
+                    self.console.print(table)
+            else:
+                self.console.print("[yellow]No load order detected.[/yellow]")
+
         # Duplicate selectors
         selectors = results.get("selectors", {})
         if selectors:
@@ -173,25 +193,6 @@ class ConsoleReporter:
                 )
         else:
             self.console.print("[green]✓ No duplicate comments found.[/green]")
-
-        # Load order per page
-        if "load_order" in results:
-            load_order = results.get("load_order") or {}
-            non_empty = {pg: ch for pg, ch in load_order.items() if ch}
-            self.console.print("\n[bold blue]Load Order (per page):[/bold blue]")
-            if non_empty:
-                for page, chain in non_empty.items():
-                    table = Table(title=str(page))
-                    table.add_column("Index", justify="right")
-                    table.add_column("CSS File", overflow="fold")
-                    show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
-                    for idx, item in enumerate(show_chain):
-                        table.add_row(str(idx + 1), self._link_cell(item))
-                    if not self.full and len(chain) > len(show_chain):
-                        table.add_row("…", f"(+{len(chain) - len(show_chain)} more)")
-                    self.console.print(table)
-            else:
-                self.console.print("[yellow]No load order detected.[/yellow]")
 
         # Conflicts
         if results.get("warnings"):
@@ -331,10 +332,11 @@ class ConsoleReporter:
         # Load order per page (if provided by analyzer)
         if "load_order" in results:
             load_order = results.get("load_order") or {}
-            non_empty = {pg: ch for pg, ch in load_order.items() if ch}
             self.console.print("\n[bold blue]Load Order (per page):[/bold blue]")
-            if non_empty:
-                for page, chain in non_empty.items():
+            if any(load_order.values()):
+                for page, chain in load_order.items():
+                    if not chain:
+                        continue
                     table = Table(title=str(page))
                     table.add_column("Index", justify="right")
                     table.add_column("CSS File", overflow="fold")
