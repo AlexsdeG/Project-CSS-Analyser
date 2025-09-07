@@ -1,4 +1,9 @@
 <?php
+// Simulate WordPress-like includes and enqueue by handle
+require_once __DIR__ . '/inc/register.php';
+wp_enqueue_style('other-h');
+?>
+<?php
 // Note-taking app PHP (simple backend simulation)
 
 $notes = isset($_POST['notes']) ? json_decode($_POST['notes'], true) : [];

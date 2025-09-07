@@ -253,6 +253,324 @@ def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, A
     # Collect JS files referenced by pages (to narrow dynamic detection scope)
     js_files_for_pages: Dict[Path, List[Path]] = {}
 
+    # -------------------------------
+    # PHP scanning helpers
+    # -------------------------------
+    # Capture define('CONST', 'value'); string values only
+    define_pattern = re.compile(r"define\(\s*['\"]([A-Z0-9_]+)['\"]\s*,\s*['\"]([^'\"]*)['\"]\s*\)", re.IGNORECASE)
+    # wp_enqueue_style( ..., "path.css" )
+    enqueue_style_string = re.compile(r"wp_(?:enqueue|register)_style\s*\(\s*[^,]*,\s*['\"]([^'\"]+\.css)['\"]", re.IGNORECASE)
+    # wp_enqueue_style( ..., CONST . 'path.css' )
+    enqueue_style_const_concat = re.compile(r"wp_(?:enqueue|register)_style\s*\(\s*[^,]*,\s*([A-Z_][A-Z0-9_]*)\s*\.\s*['\"]([^'\"]+\.css)['\"]", re.IGNORECASE)
+    # wp_enqueue_style( ..., plugins_url('path.css', ...) )
+    enqueue_style_plugins_url = re.compile(r"wp_(?:enqueue|register)_style\s*\(\s*[^,]*,\s*plugins_url\s*\(\s*['\"]([^'\"]+\.css)['\"][^)]*\)", re.IGNORECASE)
+    # wp_enqueue_style( ..., plugin_dir_url(__FILE__) . 'path.css' )
+    enqueue_style_plugin_dir_url_concat = re.compile(r"wp_(?:enqueue|register)_style\s*\(\s*[^,]*,\s*plugin_dir_url\s*\(\s*__FILE__\s*\)\s*\.\s*['\"]([^'\"]+\.css)['\"]", re.IGNORECASE)
+    # wp_enqueue_style( ..., get_stylesheet_directory_uri() . '/path.css' ) or get_template_directory_uri()
+    enqueue_style_theme_dir_uri_concat = re.compile(r"wp_(?:enqueue|register)_style\s*\(\s*[^,]*,\s*get_(?:stylesheet|template)_directory_uri\s*\(\s*\)\s*\.\s*['\"]([^'\"]+\.css)['\"]", re.IGNORECASE)
+    # include/require patterns with string literal
+    php_include_literal = re.compile(r"(?:include|include_once|require|require_once)\s*\(\s*['\"]([^'\"]+\.php)['\"]\s*\)", re.IGNORECASE)
+    # include/require with CONST . 'file.php'
+    php_include_const_concat = re.compile(r"(?:include|include_once|require|require_once)\s*\(\s*([A-Z_][A-Z0-9_]*)\s*\.\s*['\"]([^'\"]+\.php)['\"]\s*\)", re.IGNORECASE)
+
+    # Gather PHP defines across the workspace under path for resolving constants
+    def _gather_php_defines(root: Path) -> Dict[str, Dict[str, Any]]:
+        consts: Dict[str, Dict[str, Any]] = {}
+        php_files = _iter_files(root, {'.php'}, exclude_dirs)
+        for pf in php_files:
+            try:
+                txt = read_file_content(pf)
+            except Exception:
+                continue
+            for m in define_pattern.finditer(txt):
+                name = m.group(1)
+                val = m.group(2)
+                consts[name] = {'value': val, 'file': str(pf.resolve())}
+        return consts
+
+    php_constants = _gather_php_defines(path)
+
+    # Resolve a CSS asset path from different PHP enqueue patterns
+    def _resolve_css_from_php(expr_type: str, page_file: Path, match: re.Match) -> Path | None:
+        try:
+            if expr_type == 'string':
+                raw = match.group(1)
+                return _resolve_asset_path(raw, page_file, php_constants)
+            if expr_type == 'const_concat':
+                const = match.group(1)
+                tail = match.group(2)
+                # If tail is absolute-like '/foo/bar.css', try suffix search in project
+                if tail.startswith('/'):
+                    cand = _find_css_by_suffix(path, tail.lstrip('/'))
+                    if cand:
+                        return cand
+                base = None
+                info = php_constants.get(const)
+                if info:
+                    base_val = info.get('value') or ''
+                    # Prefer PATH-like constants as base directory
+                    if ('PATH' in const or 'DIR' in const) and base_val:
+                        b = Path(base_val)
+                        if b.exists():
+                            base = b
+                # Fallback: directory of the page_file
+                if base is None:
+                    # Try to find the tail by walking up the tree
+                    found = _find_upwards_for_tail(page_file, tail)
+                    if found:
+                        return found
+                    base = page_file.parent
+                return (base / tail).resolve()
+            if expr_type == 'plugins_url':
+                tail = match.group(1)
+                if tail.startswith('/'):
+                    cand = _find_css_by_suffix(path, tail.lstrip('/'))
+                    if cand:
+                        return cand
+                # Try to locate by walking up from current file
+                found = _find_upwards_for_tail(page_file, tail)
+                if found:
+                    return found
+                return (page_file.parent / tail).resolve()
+            if expr_type == 'plugin_dir_url_concat':
+                tail = match.group(1)
+                if tail.startswith('/'):
+                    cand = _find_css_by_suffix(path, tail.lstrip('/'))
+                    if cand:
+                        return cand
+                found = _find_upwards_for_tail(page_file, tail)
+                if found:
+                    return found
+                return (page_file.parent / tail).resolve()
+            if expr_type == 'theme_dir_uri_concat':
+                tail = match.group(1)
+                if tail.startswith('/'):
+                    cand = _find_css_by_suffix(path, tail.lstrip('/'))
+                    if cand:
+                        return cand
+                found = _find_upwards_for_tail(page_file, tail)
+                if found:
+                    return found
+                return (page_file.parent / tail).resolve()
+        except Exception:
+            return None
+        return None
+
+    # Resolve asset path or URL-ish string to local Path if possible
+    def _resolve_asset_path(raw: str, base_file: Path, consts: Dict[str, Dict[str, Any]]) -> Path | None:
+        # If absolute filesystem path
+        try:
+            p = Path(raw)
+            if p.suffix.lower() == '.css' and p.exists():
+                return p.resolve()
+        except Exception:
+            pass
+        # If URL, take the path part and try to map to local by suffix search
+        if re.match(r'^https?://', raw) or raw.startswith('//'):
+            try:
+                from urllib.parse import urlparse
+                u = urlparse(raw if raw.startswith('http') else 'http:' + raw)
+                url_path = u.path.lstrip('/')
+                cand = _find_css_by_suffix(path, url_path)
+                if cand:
+                    return cand
+            except Exception:
+                pass
+        # Treat as relative path
+        rel = raw.strip()
+        # Normalize potential concatenated slashes
+        rel = rel.replace('\\', '/').replace('//', '/')
+        candidate = (base_file.parent / rel).resolve()
+        if candidate.suffix.lower() == '.css' and candidate.exists():
+            return candidate
+        # If startswith '/', attempt suffix search in project
+        if rel.startswith('/'):
+            cand = _find_css_by_suffix(path, rel.lstrip('/'))
+            if cand:
+                return cand
+        return None
+
+    def _find_css_by_suffix(root: Path, suffix: str) -> Path | None:
+        """Find a CSS file under root that ends with the given suffix (path fragment)."""
+        suffix_norm = suffix.replace('\\', '/').lower()
+        for f in _iter_files(root, DEFAULT_CSS_EXTENSIONS, exclude_dirs):
+            try:
+                s = str(f.resolve()).replace('\\', '/').lower()
+                if s.endswith(suffix_norm):
+                    return f.resolve()
+            except Exception:
+                continue
+        return None
+
+    def _find_upwards_for_tail(start_file: Path, tail: str, max_levels: int = 6) -> Path | None:
+        """From start_file directory, walk up to max_levels and check for tail path existence."""
+        tail_norm = tail.replace('\\', '/')
+        cur = start_file.parent
+        for _ in range(max_levels):
+            candidate = (cur / tail_norm).resolve()
+            if candidate.exists() and candidate.suffix.lower() == '.css':
+                return candidate
+            if cur == cur.parent:
+                break
+            cur = cur.parent
+        return None
+
+    # Additional patterns for include/require variations
+    php_include_dirname = re.compile(r"(?:include|include_once|require|require_once)\s*\(\s*dirname\(\s*__FILE__\s*\)\s*\\.\s*['\"]([^'\"]+\.php)['\"]\s*\)", re.IGNORECASE)
+    php_include_dir = re.compile(r"(?:include|include_once|require|require_once)\s*\(\s*__DIR__\s*\\.\s*['\"]([^'\"]+\.php)['\"]\s*\)", re.IGNORECASE)
+    php_include_plugin_dir_path = re.compile(r"(?:include|include_once|require|require_once)\s*\(\s*plugin_dir_path\s*\(\s*__FILE__\s*\)\s*\\.\s*['\"]([^'\"]+\.php)['\"]\s*\)", re.IGNORECASE)
+    php_include_theme_dir = re.compile(r"(?:include|include_once|require|require_once)\s*\(\s*get_(?:stylesheet|template)_directory\s*\(\s*\)\s*\\.\s*['\"]([^'\"]+\.php)['\"]\s*\)", re.IGNORECASE)
+
+    # Register/enqueue by handle patterns
+    register_style_string = re.compile(r"wp_register_style\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+\.css)['\"]", re.IGNORECASE)
+    register_style_const_concat = re.compile(r"wp_register_style\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*([A-Z_][A-Z0-9_]*)\s*\.\s*['\"]([^'\"]+\.css)['\"]", re.IGNORECASE)
+    register_style_plugins_url = re.compile(r"wp_register_style\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*plugins_url\s*\(\s*['\"]([^'\"]+\.css)['\"][^)]*\)", re.IGNORECASE)
+    register_style_plugin_dir_url_concat = re.compile(r"wp_register_style\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*plugin_dir_url\s*\(\s*__FILE__\s*\)\s*\.\s*['\"]([^'\"]+\.css)['\"]", re.IGNORECASE)
+    register_style_theme_dir_uri_concat = re.compile(r"wp_register_style\s*\(\s*['\"]([^'\"]+)['\"]\s*,\s*get_(?:stylesheet|template)_directory_uri\s*\(\s*\)\s*\.\s*['\"]([^'\"]+\.css)['\"]", re.IGNORECASE)
+    enqueue_handle_pattern = re.compile(r"wp_enqueue_style\s*\(\s*['\"]([^'\"]+)['\"]", re.IGNORECASE)
+
+    def _scan_php_for_css(page: Path, visited: Set[Path], handle_map: Dict[str, Path], enqueued_handles: Set[str]) -> Tuple[List[Path], List[Path]]:
+        """Return (css_files, included_php_files) found in a PHP file. Updates handle_map and enqueued_handles in place."""
+        css_found: List[Path] = []
+        includes: List[Path] = []
+        if page in visited:
+            return css_found, includes
+        visited.add(page)
+        txt = read_file_content(page)
+        if not txt:
+            return css_found, includes
+        # Register style patterns to populate handle_map
+        for m in register_style_string.finditer(txt):
+            handle = m.group(1)
+            pth = _resolve_css_from_php('string', page, m)
+            if pth and pth.exists():
+                handle_map[handle] = pth
+        for m in register_style_const_concat.finditer(txt):
+            handle = m.group(1)
+            # build a fake match-like object for const_concat for _resolve_css_from_php expectations
+            # Here groups are (handle, CONST, tail), but resolver expects (CONST, tail)
+            class _M:
+                def __init__(self, const, tail):
+                    self._const = const
+                    self._tail = tail
+                def group(self, idx):
+                    if idx == 1:
+                        return self._const
+                    if idx == 2:
+                        return self._tail
+                    raise IndexError
+            pth = _resolve_css_from_php('const_concat', page, _M(m.group(2), m.group(3)))
+            if pth and pth.exists():
+                handle_map[handle] = pth
+        for m in register_style_plugins_url.finditer(txt):
+            handle = m.group(1)
+            class _M2:
+                def __init__(self, tail):
+                    self._tail = tail
+                def group(self, idx):
+                    if idx == 1:
+                        return self._tail
+                    raise IndexError
+            pth = _resolve_css_from_php('plugins_url', page, _M2(m.group(2)))
+            if pth and pth.exists():
+                handle_map[handle] = pth
+        for m in register_style_plugin_dir_url_concat.finditer(txt):
+            handle = m.group(1)
+            class _M3:
+                def __init__(self, tail):
+                    self._tail = tail
+                def group(self, idx):
+                    if idx == 1:
+                        return self._tail
+                    raise IndexError
+            pth = _resolve_css_from_php('plugin_dir_url_concat', page, _M3(m.group(2)))
+            if pth and pth.exists():
+                handle_map[handle] = pth
+        for m in register_style_theme_dir_uri_concat.finditer(txt):
+            handle = m.group(1)
+            class _M4:
+                def __init__(self, tail):
+                    self._tail = tail
+                def group(self, idx):
+                    if idx == 1:
+                        return self._tail
+                    raise IndexError
+            pth = _resolve_css_from_php('theme_dir_uri_concat', page, _M4(m.group(2)))
+            if pth and pth.exists():
+                handle_map[handle] = pth
+        # Enqueue patterns
+        for m in enqueue_style_string.finditer(txt):
+            pth = _resolve_css_from_php('string', page, m)
+            if pth and pth.exists():
+                css_found.append(pth)
+        for m in enqueue_style_const_concat.finditer(txt):
+            pth = _resolve_css_from_php('const_concat', page, m)
+            if pth and pth.exists():
+                css_found.append(pth)
+        for m in enqueue_style_plugins_url.finditer(txt):
+            pth = _resolve_css_from_php('plugins_url', page, m)
+            if pth and pth.exists():
+                css_found.append(pth)
+        for m in enqueue_style_plugin_dir_url_concat.finditer(txt):
+            pth = _resolve_css_from_php('plugin_dir_url_concat', page, m)
+            if pth and pth.exists():
+                css_found.append(pth)
+        for m in enqueue_style_theme_dir_uri_concat.finditer(txt):
+            pth = _resolve_css_from_php('theme_dir_uri_concat', page, m)
+            if pth and pth.exists():
+                css_found.append(pth)
+        # Enqueue by handle; resolve later after includes scanned
+        for m in enqueue_handle_pattern.finditer(txt):
+            handle = m.group(1)
+            enqueued_handles.add(handle)
+        # Includes
+        for m in php_include_literal.finditer(txt):
+            inc_rel = m.group(1)
+            inc_path = (page.parent / inc_rel).resolve()
+            if inc_path.exists() and inc_path.suffix.lower() == '.php':
+                includes.append(inc_path)
+        for m in php_include_const_concat.finditer(txt):
+            const = m.group(1)
+            tail = m.group(2)
+            base = None
+            info = php_constants.get(const)
+            if info:
+                base_val = info.get('value') or ''
+                if ('PATH' in const or 'DIR' in const) and base_val:
+                    b = Path(base_val)
+                    if b.exists():
+                        base = b
+            if base is None:
+                base = page.parent
+            inc_path = (base / tail).resolve()
+            if inc_path.exists() and inc_path.suffix.lower() == '.php':
+                includes.append(inc_path)
+        # dirname(__FILE__) . '/inc/foo.php'
+        for m in php_include_dirname.finditer(txt):
+            tail = m.group(1)
+            inc_path = (page.parent / tail.lstrip('/')).resolve()
+            if inc_path.exists() and inc_path.suffix.lower() == '.php':
+                includes.append(inc_path)
+        # __DIR__ . '/inc/foo.php'
+        for m in php_include_dir.finditer(txt):
+            tail = m.group(1)
+            inc_path = (page.parent / tail.lstrip('/')).resolve()
+            if inc_path.exists() and inc_path.suffix.lower() == '.php':
+                includes.append(inc_path)
+        # plugin_dir_path(__FILE__) . 'includes/foo.php'
+        for m in php_include_plugin_dir_path.finditer(txt):
+            tail = m.group(1)
+            found = _find_upwards_for_tail(page, tail)
+            if found and found.suffix.lower() == '.php':
+                includes.append(found)
+        # get_template_directory() . '/inc/foo.php' or get_stylesheet_directory()
+        for m in php_include_theme_dir.finditer(txt):
+            tail = m.group(1)
+            found = _find_upwards_for_tail(page, tail)
+            if found and found.suffix.lower() == '.php':
+                includes.append(found)
+        return css_found, includes
+
     for page in page_files:
         content = read_file_content(page)
         # Ordered <link> tags
@@ -276,6 +594,37 @@ def parse_html_for_css(path: Path, exclude_dirs: Set[str] = None) -> Dict[str, A
                 for f in flattened:
                     css_chain.append(str(f.resolve()))
                     all_css.add(str(f.resolve()))
+
+        # If PHP file, scan for enqueued CSS and included PHP files (recursive)
+        if page.suffix.lower() == '.php':
+            visited_php: Set[Path] = set()
+            to_scan: List[Path] = [page]
+            depth = 0
+            max_depth = 2  # prevent deep recursion
+            handle_map: Dict[str, Path] = {}
+            enqueued_handles: Set[str] = set()
+            while to_scan and depth <= max_depth:
+                next_round: List[Path] = []
+                for php_file in to_scan:
+                    css_paths, includes = _scan_php_for_css(php_file, visited_php, handle_map, enqueued_handles)
+                    for cp in css_paths:
+                        flattened = resolve_css_imports(cp)
+                        for f in flattened:
+                            css_chain.append(str(f.resolve()))
+                            all_css.add(str(f.resolve()))
+                    for inc in includes:
+                        if inc not in visited_php:
+                            next_round.append(inc)
+                to_scan = next_round
+                depth += 1
+            # After scanning all related PHP files, resolve any enqueued handles
+            for h in sorted(enqueued_handles):
+                pth = handle_map.get(h)
+                if pth and pth.exists():
+                    flattened = resolve_css_imports(pth)
+                    for f in flattened:
+                        css_chain.append(str(f.resolve()))
+                        all_css.add(str(f.resolve()))
 
         # JS included scripts for this page
         js_srcs = script_src_pattern.findall(content)
