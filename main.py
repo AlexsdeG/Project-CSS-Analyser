@@ -145,18 +145,15 @@ def structure(path, output_html, page_root, skip, full, verbose, vscode):
     if verbose:
         console.print(f"[green]Found {len(css_files)} CSS files to analyze[/green]")
     
-    # Build page map if requested or needed for skip
-    page_info = None
-    if page_root or skip:
-        root = page_root or path
-        if verbose:
-            console.print(f"[yellow]Building page load order from: {root}[/yellow]")
-        page_info = parse_html_for_css(root)
+    # Build page map to report per-page load order (defaults to PATH when --page-root not provided)
+    root = page_root or path
+    if verbose:
+        console.print(f"[yellow]Building page load order from: {root}[/yellow]")
+    page_info = parse_html_for_css(root)
 
     # Perform analysis
     analyzer = StructureAnalyzer()
-    pages = page_info['pages'] if page_info else None
-    results = analyzer.analyze(css_files, page_map=pages, skip_unreferenced=skip)
+    results = analyzer.analyze(css_files, page_map=page_info, skip_unreferenced=skip)
     
     # Report results
     console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)
@@ -210,7 +207,7 @@ def analyze(path, output_html, page_root, full, verbose, vscode):
     # Structure analysis
     console.print("[cyan]Analyzing structure...[/cyan]")
     structure_analyzer = StructureAnalyzer()
-    all_results['structure'] = structure_analyzer.analyze(css_files, page_map=page_info.get('pages') if page_info else None)
+    all_results['structure'] = structure_analyzer.analyze(css_files, page_map=page_info)
     
     # Report results
     console_reporter = ConsoleReporter(project_root=Path(path).resolve(), full=full, use_vscode=vscode)

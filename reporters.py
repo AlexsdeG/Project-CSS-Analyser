@@ -175,18 +175,23 @@ class ConsoleReporter:
             self.console.print("[green]✓ No duplicate comments found.[/green]")
 
         # Load order per page
-        if results.get("load_order"):
+        if "load_order" in results:
+            load_order = results.get("load_order") or {}
+            non_empty = {pg: ch for pg, ch in load_order.items() if ch}
             self.console.print("\n[bold blue]Load Order (per page):[/bold blue]")
-            for page, chain in results["load_order"].items():
-                table = Table(title=str(page))
-                table.add_column("Index", justify="right")
-                table.add_column("CSS File", overflow="fold")
-                show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
-                for idx, item in enumerate(show_chain):
-                    table.add_row(str(idx + 1), self._link_cell(item))
-                if not self.full and len(chain) > len(show_chain):
-                    table.add_row("…", f"(+{len(chain) - len(show_chain)} more)")
-                self.console.print(table)
+            if non_empty:
+                for page, chain in non_empty.items():
+                    table = Table(title=str(page))
+                    table.add_column("Index", justify="right")
+                    table.add_column("CSS File", overflow="fold")
+                    show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
+                    for idx, item in enumerate(show_chain):
+                        table.add_row(str(idx + 1), self._link_cell(item))
+                    if not self.full and len(chain) > len(show_chain):
+                        table.add_row("…", f"(+{len(chain) - len(show_chain)} more)")
+                    self.console.print(table)
+            else:
+                self.console.print("[yellow]No load order detected.[/yellow]")
 
         # Conflicts
         if results.get("warnings"):
@@ -324,18 +329,23 @@ class ConsoleReporter:
         self.console.print(summary_table)
 
         # Load order per page (if provided by analyzer)
-        if results.get("load_order"):
+        if "load_order" in results:
+            load_order = results.get("load_order") or {}
+            non_empty = {pg: ch for pg, ch in load_order.items() if ch}
             self.console.print("\n[bold blue]Load Order (per page):[/bold blue]")
-            for page, chain in results["load_order"].items():
-                table = Table(title=str(page))
-                table.add_column("Index", justify="right")
-                table.add_column("CSS File", overflow="fold")
-                show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
-                for idx, item in enumerate(show_chain):
-                    table.add_row(str(idx + 1), self._link_cell(item))
-                if not self.full and len(chain) > len(show_chain):
-                    table.add_row("…", f"(+{len(chain) - len(show_chain)} more)")
-                self.console.print(table)
+            if non_empty:
+                for page, chain in non_empty.items():
+                    table = Table(title=str(page))
+                    table.add_column("Index", justify="right")
+                    table.add_column("CSS File", overflow="fold")
+                    show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
+                    for idx, item in enumerate(show_chain):
+                        table.add_row(str(idx + 1), self._link_cell(item))
+                    if not self.full and len(chain) > len(show_chain):
+                        table.add_row("…", f"(+{len(chain) - len(show_chain)} more)")
+                    self.console.print(table)
+            else:
+                self.console.print("[yellow]No load order detected.[/yellow]")
 
         # Prefix analysis
         prefixes = results.get("prefixes", {})
@@ -745,20 +755,25 @@ class HTMLReporter:
                 )
 
         # Load order section
-        if results.get("load_order"):
+        if "load_order" in results:
+            load_order = results.get("load_order") or {}
+            non_empty = {pg: ch for pg, ch in load_order.items() if ch}
             html.append("<h3>Load Order (per page)</h3>")
-            for page, chain in results["load_order"].items():
-                html.append(f"<h4>{page}</h4>")
-                html.append("<table>")
-                html.append("<tr><th>#</th><th>CSS File</th></tr>")
-                show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
-                for i, item in enumerate(show_chain):
-                    html.append(f"<tr><td>{i+1}</td><td>{self._make_link(item)}</td></tr>")
-                if not self.full and len(chain) > len(show_chain):
-                    html.append(
-                        f"<tr><td>…</td><td>(+{len(chain) - len(show_chain)} more)</td></tr>"
-                    )
-                html.append("</table>")
+            if non_empty:
+                for page, chain in non_empty.items():
+                    html.append(f"<h4>{page}</h4>")
+                    html.append("<table>")
+                    html.append("<tr><th>#</th><th>CSS File</th></tr>")
+                    show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
+                    for i, item in enumerate(show_chain):
+                        html.append(f"<tr><td>{i+1}</td><td>{self._make_link(item)}</td></tr>")
+                    if not self.full and len(chain) > len(show_chain):
+                        html.append(
+                            f"<tr><td>…</td><td>(+{len(chain) - len(show_chain)} more)</td></tr>"
+                        )
+                    html.append("</table>")
+            else:
+                html.append('<div class="summary"><em>No load order detected.</em></div>')
 
         # Conflicts & Overrides
         if results.get("warnings"):
@@ -893,20 +908,25 @@ class HTMLReporter:
         html.append('</div>')
 
         # Load order per page
-        if results.get("load_order"):
+        if "load_order" in results:
+            load_order = results.get("load_order") or {}
+            non_empty = {pg: ch for pg, ch in load_order.items() if ch}
             html.append("<h3>Load Order (per page)</h3>")
-            for page, chain in results["load_order"].items():
-                html.append(f"<h4>{page}</h4>")
-                html.append("<table>")
-                html.append("<tr><th>#</th><th>CSS File</th></tr>")
-                show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
-                for i, item in enumerate(show_chain):
-                    html.append(f"<tr><td>{i+1}</td><td>{self._make_link(item)}</td></tr>")
-                if not self.full and len(chain) > len(show_chain):
-                    html.append(
-                        f"<tr><td>…</td><td>(+{len(chain) - len(show_chain)} more)</td></tr>"
-                    )
-                html.append("</table>")
+            if non_empty:
+                for page, chain in non_empty.items():
+                    html.append(f"<h4>{page}</h4>")
+                    html.append("<table>")
+                    html.append("<tr><th>#</th><th>CSS File</th></tr>")
+                    show_chain = chain if self.full else chain[: (self.table_cap or DEFAULT_TABLE_CAP)]
+                    for i, item in enumerate(show_chain):
+                        html.append(f"<tr><td>{i+1}</td><td>{self._make_link(item)}</td></tr>")
+                    if not self.full and len(chain) > len(show_chain):
+                        html.append(
+                            f"<tr><td>…</td><td>(+{len(chain) - len(show_chain)} more)</td></tr>"
+                        )
+                    html.append("</table>")
+            else:
+                html.append('<div class="summary"><em>No load order detected.</em></div>')
 
         # Prefix analysis
         prefixes = results.get("prefixes", {})
